@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>SSH 隧道管理器</title>
+    <script>
+      // 全局禁用右键菜单：界面内任意位置右键不再弹出 WebView2 默认菜单
+      document.addEventListener(
+        "contextmenu",
+        function (e) {
+          e.preventDefault();
+        },
+        { capture: true },
+      );
+    </script>
+    <script>
+      // 在首帧之前应用主题，避免深色模式下的“闪白”
+      (function () {
+        try {
+          var stored = localStorage.getItem("theme");
+          var prefersDark =
+            window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+          if (stored === "dark" || (!stored && prefersDark)) {
+            document.documentElement.classList.add("dark");
+          }
+        } catch (e) {
+          /* localStorage 不可用时忽略 */
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

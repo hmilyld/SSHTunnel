@@ -1,0 +1,5 @@
+# pnpm 10+ project-level settings live here (even outside a monorepo).
+# pnpm 11+ replaced `onlyBuiltDependencies` with the `allowBuilds` map:
+# allow dependency lifecycle scripts to run only for packages you reviewed.
+allowBuilds:
+  esbuild: true

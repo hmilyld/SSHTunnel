@@ -1,0 +1,37 @@
+[package]
+name = "ssh-tunnel-manager"
+version = "0.1.0"
+description = "跨平台 SSH 本地端口转发（ssh -L）管理器"
+authors = ["hmilyld"]
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "ssh_tunnel_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon", "image-png", "image-ico"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["process", "io-util", "time", "sync", "macros", "rt-multi-thread"] }
+thiserror = "2"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+uuid = { version = "1", features = ["v4"] }
+dirs = "6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Unix（macOS）侧：libc::kill 用于进程存活检测与信号发送
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"

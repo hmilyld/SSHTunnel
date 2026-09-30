@@ -1,0 +1,18 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口默认能力 + 自绘标题栏所需的窗口控制（最小化/最大化/隐藏/拖拽）。",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-toggle-maximize",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
+    "core:window:allow-hide",
+    "core:window:allow-show",
+    "core:window:allow-is-maximized",
+    "core:window:allow-start-dragging",
+    "core:window:allow-set-focus"
+  ]
+}

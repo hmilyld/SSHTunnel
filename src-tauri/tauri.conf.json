@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SSH Tunnel Manager",
+  "version": "0.1.0",
+  "identifier": "com.hmilyld.ssh-tunnel-manager",
+  "build": {
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "windows": [
+      {
+        "label": "main",
+        "title": "SSH 隧道管理器",
+        "width": 1120,
+        "height": 740,
+        "minWidth": 940,
+        "minHeight": 600,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": false,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "DeveloperTool",
+    "shortDescription": "SSH 本地端口转发管理器",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0"
+    }
+  }
+}
