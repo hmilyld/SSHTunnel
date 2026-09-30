@@ -267,4 +267,7 @@ node scripts/gen-icons.mjs
   下拉解析正常），业务主机连通性由日常使用验证。
 - macOS 侧代码路径（`libc::kill`、`ps -o comm`、ICNS 图标）已按平台条件编译实现，
   需在 macOS 12+ 上执行 `pnpm tauri dev / build` 做最终回归。
-- 打包分发（`pnpm tauri build` → msi/nsis/dmg）在本机未执行（避免下载打包器）。
+- 打包分发已在本机执行：`pnpm tauri build` 产出
+  `SSH Tunnel Manager_0.1.0_x64_en-US.msi`（2.1 MB）与
+  `SSH Tunnel Manager_0.1.0_x64-setup.exe`（1.5 MB）；
+  macOS（dmg/app）需在 macOS 机器上执行同样的 `pnpm tauri build`。
