@@ -329,20 +329,84 @@ async fn verify_password_auth(host: &str, password: &str) -> Result<(), AppError
     }
 }
 
-/// 拉起一个 `ssh -L` 进程并完成 800ms 检活。
+/// 绑定地址 → 探测目标 IP 列表（`None` 表示是主机名，需要 DNS 解析）
 ///
-/// - `password = None`：追加 `-o BatchMode=yes`（禁止任何交互，认证失败快速返回，
-///   由错误分类决定是否需要弹密码框）
-/// - `password = Some`：追加 `-o NumberOfPasswordPrompts=1` 并通过 `SSH_ASKPASS`
-///   把密码交给 ssh（askpass 即本程序的辅助模式）
+/// - `0.0.0.0`（v4 通配）→ 连 127.0.0.1
+/// - `localhost` → 127.0.0.1 与 ::1 都试（ssh 可能绑任一协议栈）
+/// - `::`（v6 通配）→ 先 ::1 再 127.0.0.1
+/// - 具体 IP → 直连该地址
+fn probe_addrs(bind: &str) -> Option<Vec<std::net::IpAddr>> {
+    use std::net::{IpAddr, Ipv4Addr};
+    let v4loop: IpAddr = Ipv4Addr::LOCALHOST.into();
+    let v6loop: IpAddr = std::net::Ipv6Addr::LOCALHOST.into();
+    Some(match bind.trim() {
+        "0.0.0.0" => vec![v4loop],
+        "localhost" => vec![v4loop, v6loop],
+        "::" => vec![v6loop, v4loop],
+        s => match s.parse::<IpAddr>() {
+            Ok(ip) => vec![ip],
+            Err(_) => return None, // 主机名，调用方走 DNS
+        },
+    })
+}
+
+/// 本地端口是否已进入监听（250ms/地址 上限）
 ///
-/// 返回仍存活的 [`tokio::process::Child`] 与其 stderr 缓冲（由回收任务接管 wait）。
+/// ssh 在**认证通过之后**才会绑定 `-L` 的本地监听端口，因此“监听出现”
+/// 是比固定时间窗口可靠得多的“隧道就绪”信号。
+async fn is_listening(bind: &str, port: u16) -> bool {
+    let mut addrs = match probe_addrs(bind) {
+        Some(a) => a,
+        None => {
+            // 绑定值是主机名：交给 DNS 解析（失败则视为未监听）
+            match tokio::net::lookup_host((bind.trim(), port)).await {
+                Ok(iter) => iter.map(|a| a.ip()).collect(),
+                Err(_) => return false,
+            }
+        }
+    };
+    addrs.dedup();
+
+    for ip in addrs {
+        let fut = async {
+            match tokio::net::TcpStream::connect((ip, port)).await {
+                Ok(_s) => {
+                    // 连上即证明监听存在；立即关闭，不产生任何数据传输
+                    true
+                }
+                Err(_) => false,
+            }
+        };
+        match tokio::time::timeout(Duration::from_millis(250), fut).await {
+            Ok(true) => return true,
+            Ok(false) => continue,
+            Err(_) => continue, // 超时（防火墙黑洞等）→ 试下一个地址
+        }
+    }
+    false
+}
+
+/// 拉起一个 `ssh -L` 进程并判定其真正就绪。
+///
+/// - `password = None`：追加 `-o BatchMode=yes`（禁止任何交互，认证失败快速返回）
+/// - `password = Some`：先做密码预检（5s 上限、fail-open），再通过 `SSH_ASKPASS` 注入密码
+///
+/// **成功判定**：本地 `bind:port` 进入监听（而非固定等待时间）；
+/// **失败判定**：进程退出（即时分类为密码错误/端口占用/连接失败等），
+/// 或 18s 仍未监听（ssh 自身 `ConnectTimeout=15` 通常会先退出并给出真实原因）。
 async fn spawn_ssh(
     spec: &str,
     host: &str,
     password: Option<&str>,
+    bind: &str,
+    local_port: u16,
 ) -> Result<(tokio::process::Child, Arc<Mutex<String>>), AppError> {
-    // ===== 密码模式：先预检认证，密码错误在此阶段直接返回（不会出现“成功后立刻失败”） =====
+    // ===== 0. 环境预检：本地端口已被其他进程占用 → 立即明确报错（也不用浪费连接） =====
+    if is_listening(bind, local_port).await {
+        return Err(AppError::PortInUse(format!("{bind}:{local_port}")));
+    }
+
+    // ===== 1. 密码模式：先预检认证，密码错误在此阶段直接返回（不会出现“成功后立刻失败”） =====
     if let Some(pwd) = password {
         verify_password_auth(host, pwd).await?;
     }
@@ -355,6 +419,9 @@ async fn spawn_ssh(
         "ServerAliveInterval=30".into(),
         "-o".into(),
         "ServerAliveCountMax=3".into(),
+        // 连接阶段硬上限：连不上 ssh 会在 15s 内自行退出 → 走失败分类
+        "-o".into(),
+        "ConnectTimeout=15".into(),
         // 新主机自动按 TOFU 接受（已变更的主机密钥仍会硬失败），
         // 避免首次连接时 yes/no 询问在无终端环境下卡死
         "-o".into(),
@@ -416,33 +483,48 @@ async fn spawn_ssh(
         });
     }
 
-    // ===== 启动后等待稳定性窗口再判定（密码模式含 askpass 往返，窗口放宽到 2s） =====
-    let settle = if password.is_some() {
-        Duration::from_millis(2000)
-    } else {
-        Duration::from_millis(800)
-    };
-    tokio::time::sleep(settle).await;
-    match child.try_wait() {
-        Ok(Some(status)) => {
-            let detail = stderr_buf
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone();
-            tracing::warn!("ssh 启动后立即退出：{status}；stderr: {detail}");
-            // 分类一：服务器接受密码认证 → 交给前端弹密码框
-            //（已提供密码仍失败 = 密码错误，同样走此路径让用户重新输入）
-            if is_password_required(&detail) {
-                return Err(AppError::PasswordRequired(last_meaningful_line(&detail)));
-            }
-            Err(AppError::StartFailed {
-                reason: explain_failure(status, &detail),
-            })
+    // ===== 2. 成功判定：本地端口进入监听（认证通过后 ssh 才会绑定） =====
+    //    失败判定：进程退出（即时分类）；18s 仍未监听 → 杀进程并报超时。
+    //    （ssh 自身 ConnectTimeout=15 会先退出给出真实原因，这里兜底“卡认证/黑洞”）
+    let deadline = std::time::Instant::now() + Duration::from_secs(18);
+    loop {
+        if is_listening(bind, local_port).await {
+            tracing::info!("本地端口 {bind}:{local_port} 已监听 → 隧道就绪");
+            return Ok((child, stderr_buf));
         }
-        Ok(None) => Ok((child, stderr_buf)), // 存活
-        Err(e) => Err(AppError::StartFailed {
-            reason: format!("等待 ssh 进程失败：{e}"),
-        }),
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let detail = stderr_buf
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                tracing::warn!("ssh 启动后退出：{status}；stderr: {detail}");
+                // 分类一：服务器接受密码认证 → 交给前端弹密码框
+                //（已提供密码仍失败 = 密码错误，同样走此路径让用户重新输入）
+                if is_password_required(&detail) {
+                    return Err(AppError::PasswordRequired(last_meaningful_line(&detail)));
+                }
+                return Err(AppError::StartFailed {
+                    reason: explain_failure(status, &detail),
+                });
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    let _ = child.start_kill();
+                    return Err(AppError::StartFailed {
+                        reason: format!(
+                            "建立隧道超时：18 秒内 {bind}:{local_port} 未进入监听（服务器连接/认证过慢，或本地端口被防火墙拦截）"
+                        ),
+                    });
+                }
+                tokio::time::sleep(Duration::from_millis(150)).await;
+            }
+            Err(e) => {
+                return Err(AppError::StartFailed {
+                    reason: format!("等待 ssh 进程失败：{e}"),
+                })
+            }
+        }
     }
 }
 
@@ -494,7 +576,9 @@ pub async fn start_tunnel(
         }
     }
 
-    let (child, stderr_buf) = spawn_ssh(&spec, req.host.trim(), password.as_deref()).await?;
+    let (child, stderr_buf) =
+        spawn_ssh(&spec, req.host.trim(), password.as_deref(), &req.bind, req.local_port as u16)
+            .await?;
     let pid = child
         .id()
         .ok_or_else(|| AppError::StartFailed {
@@ -609,7 +693,14 @@ pub async fn restart_tunnel(
         }
     }
 
-    let (child, stderr_buf) = spawn_ssh(&spec, &record.host, password.as_deref()).await?;
+    let (child, stderr_buf) = spawn_ssh(
+        &spec,
+        &record.host,
+        password.as_deref(),
+        &record.bind,
+        record.local_port,
+    )
+    .await?;
     let pid = child
         .id()
         .ok_or_else(|| AppError::StartFailed {
@@ -751,5 +842,21 @@ mod tests {
         assert!(joined.contains("NumberOfPasswordPrompts=1"));
         // 主机名在最后
         assert_eq!(args.last().map(String::as_str), Some("dev"));
+    }
+
+    #[test]
+    fn probe_addrs_follow_bind_rules() {
+        use std::net::IpAddr;
+        let v4: IpAddr = "127.0.0.1".parse().unwrap();
+        let v6: IpAddr = "::1".parse().unwrap();
+        // 通配 / 具体 IP 的映射
+        assert_eq!(probe_addrs("0.0.0.0"), Some(vec![v4]));
+        assert_eq!(probe_addrs("127.0.0.1"), Some(vec![v4]));
+        assert_eq!(probe_addrs("::1"), Some(vec![v6]));
+        assert_eq!(probe_addrs("::"), Some(vec![v6, v4]));
+        // localhost 双栈都试
+        assert_eq!(probe_addrs("localhost"), Some(vec![v4, v6]));
+        // 主机名 → 交给 DNS（返回 None）
+        assert_eq!(probe_addrs("my-server.lan"), None);
     }
 }

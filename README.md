@@ -56,7 +56,7 @@ SSHTunnel/
         ├── main.rs              # 进程入口
         ├── lib.rs               # 组装 Builder：状态、命令、托盘、关窗隐藏
         ├── ssh_config.rs        # ~/.ssh/config 解析（含单元测试）
-        ├── tunnel.rs            # 隧道生命周期：启动 800ms 检活、停止、事件广播
+        ├── tunnel.rs            # 隧道生命周期：启动判定（本地端口监听探测）、停止、事件广播
         ├── store.rs             # tunnels.json 持久化（原子写 + 损坏备份，含测试）
         ├── process.rs           # 跨平台进程检测/终止（tasklist·taskkill / kill）
         ├── commands.rs          # Tauri 命令层（前端接口）
@@ -82,7 +82,7 @@ React UI ──invoke──▶ commands.rs ──▶ tunnel.rs ──▶ tokio::
 
 | 需求点 | 实现 |
 | --- | --- |
-| 启动后 800ms 检活 | `tokio::time::sleep(800ms)` 后 `child.try_wait()`；退出则解析 stderr 给出原因（端口占用 / 认证失败 / 连接被拒 / 主机名无法解析…） |
+| 启动成功判定 | **成功 = 本地 `bind:port` 真正进入监听**（每 150ms TCP 探测；ssh 认证通过后才会绑定 `-L` 监听），监听一出现立即返回，慢服务器不谎报成功；**失败 = 进程退出**（即时解析 stderr 归因：端口占用 / 密码错误 / 认证失败 / 连接被拒 / 主机名无法解析…）**或 18s 无监听**（杀进程报超时；ssh 自身 `ConnectTimeout=15` 通常先退出给出真实原因）。启动前还会预检本地端口是否已被**其他进程**占用（立即明确报错） |
 | 状态判断 | `process.rs::is_ssh_process(pid)`：Windows 用 `tasklist`，macOS/Linux 用 `libc::kill(pid,0)` + `/proc` 或 `ps`；**校验进程名是 ssh**，防止 PID 复用误判/误杀 |
 | 关闭转发 | 先优雅（Windows `taskkill` / Unix `SIGTERM`）→ 最多等 1.8s → `taskkill /F` 或 `SIGKILL`；**保留记录**（PID 清零 → 「已停止」），配置长期保存可随时「启动」复用 |
 | 持久化 | `tunnels.json` 原子写（临时文件 + rename）；损坏时自动备份为 `.bak`；字段与需求文档一致（snake_case） |
@@ -287,7 +287,8 @@ node scripts/gen-icons.mjs
 ### 已知边界 / 待真机补充
 
 - **启动成功路径**需要真实可达的 SSH 主机与密钥：功能验证阶段本机尚未配置
-  `~/.ssh/config`，故对 `start_tunnel` 覆盖的是其失败分支（800ms 检活 + stderr 归因），
+  `~/.ssh/config`，故对 `start_tunnel` 覆盖的是其失败分支（端口占用预检、
+  18s 监听超时与 stderr 归因），
   `stop_tunnel` / `restart_tunnel` 覆盖完整成功分支；后续已接入真实配置（5 个 Host 的
   下拉解析正常），业务主机连通性由日常使用验证。
 - macOS 侧代码路径（`libc::kill`、`ps -o comm`、ICNS 图标）已按平台条件编译实现，
