@@ -204,7 +204,7 @@ node scripts/gen-icons.mjs
      `PreferredAuthentications=password,keyboard-interactive`、
      `NumberOfPasswordPrompts=1`）验证密码——密码错误在预检阶段就红字提示，
      **不会出现“提示成功后立刻失败”**；预检通过才建立真正的隧道
-     （密码模式的稳定性检活窗口也从 800ms 放宽到 2s 兜底）。
+     （最终成功判定以本地端口是否进入监听为准，慢服务器不会误报成功）。
    - 预检超时（>5s）或连接类错误时 fail-open，交由隧道启动给出真实错误。
    - 密码通过 `SSH_ASKPASS=<本程序> + SSH_ASKPASS_REQUIRE=force +
      STM_ASKPASS_PWD=<密码>` 注入 ssh 子进程环境；
