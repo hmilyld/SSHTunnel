@@ -69,6 +69,16 @@ pub fn remove_tunnel(state: State<'_, AppState>, id: String) -> Result<Vec<Tunne
     tunnel::remove_record(state.inner(), &id)
 }
 
+/// 修改已停止记录的配置（不涉及进程，ID/创建时间不变）
+#[tauri::command]
+pub fn update_tunnel(
+    state: State<'_, AppState>,
+    id: String,
+    request: StartRequest,
+) -> Result<Vec<TunnelView>, AppError> {
+    tunnel::update_record(state.inner(), &id, request)
+}
+
 /// ~/.ssh/config 路径（用于界面提示）
 #[tauri::command]
 pub fn ssh_config_path() -> String {

@@ -28,6 +28,8 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  /** 正在修改的已停止记录（null = 新建模式） */
+  const [editing, setEditing] = useState<Tunnel | null>(null);
   const [dataPath, setDataPath] = useState("");
 
   // ===== 密码认证流程（服务器要求密码时由后端 PASSWORD_REQUIRED 触发） =====
@@ -133,7 +135,7 @@ export default function App() {
     request: Parameters<typeof api.startTunnel>[0],
     message: string,
   ) => {
-    setDialogOpen(false);
+    handleDialogOpenChange(false);
     setPwdError(null);
     setPwdReq({ kind: "start", request, message });
   };
@@ -193,10 +195,28 @@ export default function App() {
     }
   };
 
-  /** 启动成功：关弹窗 + 立即刷新 */
+  /** 启动成功/保存成功：关弹窗 + 立即刷新 */
   const handleStarted = () => {
-    setDialogOpen(false);
+    handleDialogOpenChange(false);
     void refresh(true);
+  };
+
+  /** 弹窗开合（关闭时同步清空“修改”上下文） */
+  const handleDialogOpenChange = (open: boolean) => {
+    setDialogOpen(open);
+    if (!open) setEditing(null);
+  };
+
+  /** 打开新建弹窗 */
+  const openNewDialog = () => {
+    setEditing(null);
+    setDialogOpen(true);
+  };
+
+  /** 打开修改弹窗（已停止的记录） */
+  const openEditDialog = (t: Tunnel) => {
+    setEditing(t);
+    setDialogOpen(true);
   };
 
   const running = tunnels.filter((t) => t.alive).length;
@@ -208,7 +228,7 @@ export default function App() {
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
         <AppHeader
-          onNew={() => setDialogOpen(true)}
+          onNew={openNewDialog}
           onRefresh={() => void refresh()}
           refreshing={refreshing}
         />
@@ -220,8 +240,9 @@ export default function App() {
             busyId={busyId}
             onStop={handleStop}
             onStart={handleStart}
+            onEdit={openEditDialog}
             onDelete={handleDelete}
-            onNew={() => setDialogOpen(true)}
+            onNew={openNewDialog}
           />
         </main>
 
@@ -230,9 +251,10 @@ export default function App() {
 
       <NewTunnelDialog
         open={dialogOpen}
-        onOpenChange={setDialogOpen}
+        onOpenChange={handleDialogOpenChange}
         onStarted={handleStarted}
         onPasswordNeeded={handlePasswordNeeded}
+        editing={editing}
       />
 
       {/* 密码认证弹窗（新建 / 重启共用） */}

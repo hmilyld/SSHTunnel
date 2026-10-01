@@ -80,6 +80,10 @@ export const api = {
   /** 显式删除记录（仅允许删除已停止的记录） */
   removeTunnel: (id: string) => invoke<Tunnel[]>("remove_tunnel", { id }),
 
+  /** 修改已停止记录的配置（ID/创建时间不变，不涉及进程） */
+  updateTunnel: (id: string, request: StartTunnelRequest) =>
+    invoke<Tunnel[]>("update_tunnel", { id, request }),
+
   /** ~/.ssh/config 路径（界面提示用） */
   sshConfigPath: () => invoke<string>("ssh_config_path"),
 

@@ -44,6 +44,7 @@ pub fn run() {
             commands::stop_tunnel,
             commands::restart_tunnel,
             commands::remove_tunnel,
+            commands::update_tunnel,
             commands::ssh_config_path,
             commands::data_path,
         ])

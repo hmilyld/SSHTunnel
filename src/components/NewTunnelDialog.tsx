@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { AlertIcon, SpinnerIcon, TerminalIcon } from "@/components/icons";
+import { AlertIcon, PencilIcon, SpinnerIcon, TerminalIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
@@ -20,15 +21,24 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { api, isPasswordRequired, passwordRequiredMessage, type SshHost, type StartTunnelRequest } from "@/lib/api";
+import {
+  api,
+  isPasswordRequired,
+  passwordRequiredMessage,
+  type SshHost,
+  type StartTunnelRequest,
+  type Tunnel,
+} from "@/lib/api";
 
 interface NewTunnelDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** 启动成功后回调（父组件负责关闭弹窗并刷新列表） */
+  /** 启动/保存成功后回调（父组件负责关闭弹窗并刷新列表） */
   onStarted: () => void;
   /** 后端探测到需要密码认证：把请求交给父组件弹出密码框 */
   onPasswordNeeded: (request: StartTunnelRequest, message: string) => void;
+  /** 传入记录 = 修改模式（仅用于已停止的记录，保存配置、不启动进程） */
+  editing?: Tunnel | null;
 }
 
 const BIND_OPTIONS = [
@@ -37,6 +47,19 @@ const BIND_OPTIONS = [
   { value: "0.0.0.0", label: "0.0.0.0 — 允许局域网 / 外部访问" },
   { value: "::1", label: "::1 — IPv6 仅本机访问" },
 ];
+
+/**
+ * 远程目标主机 → 本地绑定地址 的联动规则：
+ * - `localhost` → 绑定 `localhost`
+ * - `127.0.0.1` → 绑定 `127.0.0.1`
+ * - 其他地址不干预（保持当前选择）
+ */
+function bindForRemoteHost(remoteHost: string, current?: string): string {
+  const t = remoteHost.trim().toLowerCase();
+  if (t === "localhost") return "localhost";
+  if (t === "127.0.0.1") return "127.0.0.1";
+  return current ?? "127.0.0.1";
+}
 
 /** 端口校验：必填、纯数字、1-65535 */
 function validatePort(value: string): string | null {
@@ -53,6 +76,7 @@ export function NewTunnelDialog({
   onOpenChange,
   onStarted,
   onPasswordNeeded,
+  editing = null,
 }: NewTunnelDialogProps) {
   const [hosts, setHosts] = useState<SshHost[]>([]);
   const [hostsLoading, setHostsLoading] = useState(false);
@@ -69,17 +93,29 @@ export function NewTunnelDialog({
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
 
-  // 打开弹窗时：重置表单 + 加载 Host 列表
+  // 打开弹窗时：按模式（新建 / 修改）初始化表单 + 加载 Host 列表
   useEffect(() => {
     if (!open) return;
-    setHost("");
-    setRemoteHost("localhost");
-    setRemotePort("");
-    setLocalPort("");
-    setLocalPortTouched(false);
-    setBind("127.0.0.1");
     setErrors({});
     setSubmitting(false);
+    if (editing) {
+      // 修改模式：回填记录（绑定地址按记录值，不做联动覆盖）
+      setHost(editing.host);
+      setRemoteHost(editing.remote_host);
+      setRemotePort(String(editing.remote_port));
+      setLocalPort(String(editing.local_port));
+      setLocalPortTouched(true);
+      setBind(editing.bind);
+    } else {
+      // 新建模式：默认远程 localhost → 绑定按联动规则取 localhost
+      const rh = "localhost";
+      setHost("");
+      setRemoteHost(rh);
+      setRemotePort("");
+      setLocalPort("");
+      setLocalPortTouched(false);
+      setBind(bindForRemoteHost(rh));
+    }
 
     setHostsLoading(true);
     setHostsError("");
@@ -92,7 +128,7 @@ export function NewTunnelDialog({
       .sshConfigPath()
       .then(setConfigPath)
       .catch(() => {});
-  }, [open]);
+  }, [open, editing]);
 
   // 远程端口变化时，本地端口跟随（用户手动改过后不再跟随）
   const onRemotePortChange = (value: string) => {
@@ -129,6 +165,15 @@ export function NewTunnelDialog({
 
     setSubmitting(true);
     try {
+      if (editing) {
+        // ===== 修改模式：仅保存配置，不启动进程 =====
+        await api.updateTunnel(editing.id, request);
+        toast.success("已保存修改", {
+          description: `${request.host} → ${request.bind}:${request.local_port} → ${request.remote_host}:${request.remote_port}`,
+        });
+        onStarted();
+        return;
+      }
       // 首次不带密码启动：若服务器需要密码，后端返回 PASSWORD_REQUIRED 错误
       const tunnel = await api.startTunnel(request);
       toast.success("隧道已启动", {
@@ -136,11 +181,11 @@ export function NewTunnelDialog({
       });
       onStarted();
     } catch (e) {
-      if (isPasswordRequired(e)) {
+      if (!editing && isPasswordRequired(e)) {
         // 交给父组件：关闭本弹窗、打开密码框，确认后带密码重新启动
         onPasswordNeeded(request, passwordRequiredMessage(e));
       } else {
-        toast.error("启动失败", { description: String(e) });
+        toast.error(editing ? "保存失败" : "启动失败", { description: String(e) });
       }
     } finally {
       setSubmitting(false);
@@ -154,20 +199,29 @@ export function NewTunnelDialog({
       <DialogContent className="max-h-[calc(100vh-4rem)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary/10 text-primary">
-              <TerminalIcon className="h-4 w-4" />
+            <span
+              className={cn(
+                "flex h-8 w-8 items-center justify-center rounded-lg",
+                editing
+                  ? "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  : "bg-primary/10 text-primary",
+              )}
+            >
+              {editing ? <PencilIcon className="h-4 w-4" /> : <TerminalIcon className="h-4 w-4" />}
             </span>
-            新建转发
+            {editing ? "修改转发" : "新建转发"}
           </DialogTitle>
           <DialogDescription>
-            选择 SSH Host，把远程服务映射到本地端口（ssh -L）。假设已配置密钥免密登录。
+            {editing
+              ? "更新已停止的转发配置；保存后可随时「启动」复用。"
+              : "选择 SSH Host，把远程服务映射到本地端口（ssh -L）；支持密钥与密码认证。"}
           </DialogDescription>
         </DialogHeader>
 
         {/* 命令预览 */}
         <div className="rounded-lg border border-border bg-muted/60 px-3 py-2.5">
           <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            将执行
+            {editing ? "保存后启动时将执行" : "将执行"}
           </p>
           <code className="block break-all text-xs leading-relaxed text-foreground/90">
             {preview}
@@ -227,13 +281,16 @@ export function NewTunnelDialog({
               value={remoteHost}
               placeholder="localhost"
               onChange={(e) => {
-                setRemoteHost(e.target.value);
+                const v = e.target.value;
+                setRemoteHost(v);
+                // 联动规则：localhost ↔ 127.0.0.1 同步绑定地址；其他地址不干预
+                setBind(bindForRemoteHost(v, bind));
                 setErrors((p) => ({ ...p, remote_host: "" }));
               }}
               aria-invalid={!!errors.remote_host}
             />
             <p className="text-[11px] text-muted-foreground">
-              从 SSH 服务器视角访问的地址，通常是 localhost 或 127.0.0.1
+              从 SSH 服务器视角访问的地址；填 localhost / 127.0.0.1 时会自动同步本地绑定地址
             </p>
             {errors.remote_host && <p className="text-xs text-destructive">{errors.remote_host}</p>}
           </div>
@@ -301,8 +358,10 @@ export function NewTunnelDialog({
             {submitting ? (
               <>
                 <SpinnerIcon className="h-4 w-4 animate-spin" />
-                启动中…
+                {editing ? "保存中…" : "启动中…"}
               </>
+            ) : editing ? (
+              "保存修改"
             ) : (
               "启动转发"
             )}

@@ -647,6 +647,64 @@ pub fn remove_record(state: &AppState, id: &str) -> Result<Vec<TunnelView>, AppE
     drop(store);
     Ok(state.list_views())
 }
+
+/// 修改一条已保存记录的配置（不涉及进程；ID 与创建时间不变）
+///
+/// 约束：
+/// - 正在运行的记录不可修改（先关闭）
+/// - 新的 bind:local_port 不能与**其他正在运行**的记录冲突
+pub fn update_record(
+    state: &AppState,
+    id: &str,
+    req: StartRequest,
+) -> Result<Vec<TunnelView>, AppError> {
+    req.validate()?;
+
+    let mut store = state.store.lock().unwrap_or_else(|e| e.into_inner());
+    let record = store
+        .get(id)
+        .ok_or_else(|| AppError::NotFound(id.to_string()))?
+        .clone();
+    if record.pid > 0 && process::is_ssh_process(record.pid) {
+        return Err(AppError::Validation(
+            "该隧道正在运行，请先关闭再修改".into(),
+        ));
+    }
+
+    let conflict = store.list().iter().any(|r| {
+        r.id != record.id
+            && r.bind == req.bind
+            && r.local_port == req.local_port as u16
+            && r.pid > 0
+            && process::is_ssh_process(r.pid)
+    });
+    if conflict {
+        return Err(AppError::PortInUse(format!(
+            "{}:{}",
+            req.bind, req.local_port
+        )));
+    }
+
+    if let Some(r) = store.get_mut(id) {
+        r.host = req.host.trim().to_string();
+        r.bind = req.bind.trim().to_string();
+        r.local_port = req.local_port as u16;
+        r.remote_host = req.remote_host.trim().to_string();
+        r.remote_port = req.remote_port as u16;
+        r.pid = 0; // 保持「已停止」状态
+    }
+    store.save()?;
+    drop(store);
+
+    tracing::info!(
+        "隧道 {id} 配置已更新：{}:{} -> {}:{}",
+        req.bind,
+        req.local_port,
+        req.remote_host,
+        req.remote_port
+    );
+    Ok(state.list_views())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

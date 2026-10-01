@@ -1,4 +1,5 @@
 import {
+  PencilIcon,
   PlayIcon,
   PowerIcon,
   PlusIcon,
@@ -28,6 +29,8 @@ interface TunnelTableProps {
   onStop: (tunnel: Tunnel) => void;
   /** 启动（复用已保存的记录重新拉起 ssh） */
   onStart: (tunnel: Tunnel) => void;
+  /** 修改（编辑已停止记录的配置） */
+  onEdit: (tunnel: Tunnel) => void;
   /** 删除（仅已停止的记录） */
   onDelete: (tunnel: Tunnel) => void;
   onNew: () => void;
@@ -70,6 +73,7 @@ export function TunnelTable({
   busyId,
   onStop,
   onStart,
+  onEdit,
   onDelete,
   onNew,
 }: TunnelTableProps) {
@@ -104,7 +108,7 @@ export function TunnelTable({
           <TableHead className="w-[90px]">PID</TableHead>
           <TableHead className="w-[150px]">创建时间</TableHead>
           <TableHead className="w-[104px]">状态</TableHead>
-          <TableHead className="w-[210px] text-right">操作</TableHead>
+          <TableHead className="w-[270px] text-right">操作</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -186,6 +190,16 @@ export function TunnelTable({
                           <PlayIcon className="h-3.5 w-3.5" />
                         )}
                         启动
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={busy}
+                        onClick={() => onEdit(t)}
+                        title="修改这条转发的配置（不影响进程）"
+                      >
+                        <PencilIcon className="h-3.5 w-3.5" />
+                        修改
                       </Button>
                       <Button
                         variant="ghost"
