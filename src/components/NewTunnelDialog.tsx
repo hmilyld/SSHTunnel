@@ -20,13 +20,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { api, type SshHost, type StartTunnelRequest } from "@/lib/api";
+import { api, isPasswordRequired, passwordRequiredMessage, type SshHost, type StartTunnelRequest } from "@/lib/api";
 
 interface NewTunnelDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** 启动成功后回调（父组件负责关闭弹窗并刷新列表） */
   onStarted: () => void;
+  /** 后端探测到需要密码认证：把请求交给父组件弹出密码框 */
+  onPasswordNeeded: (request: StartTunnelRequest, message: string) => void;
 }
 
 const BIND_OPTIONS = [
@@ -46,7 +48,12 @@ function validatePort(value: string): string | null {
   return null;
 }
 
-export function NewTunnelDialog({ open, onOpenChange, onStarted }: NewTunnelDialogProps) {
+export function NewTunnelDialog({
+  open,
+  onOpenChange,
+  onStarted,
+  onPasswordNeeded,
+}: NewTunnelDialogProps) {
   const [hosts, setHosts] = useState<SshHost[]>([]);
   const [hostsLoading, setHostsLoading] = useState(false);
   const [configPath, setConfigPath] = useState("");
@@ -122,13 +129,19 @@ export function NewTunnelDialog({ open, onOpenChange, onStarted }: NewTunnelDial
 
     setSubmitting(true);
     try {
+      // 首次不带密码启动：若服务器需要密码，后端返回 PASSWORD_REQUIRED 错误
       const tunnel = await api.startTunnel(request);
       toast.success("隧道已启动", {
         description: `${tunnel.host} → ${tunnel.bind}:${tunnel.local_port}（PID ${tunnel.pid}）`,
       });
       onStarted();
     } catch (e) {
-      toast.error("启动失败", { description: String(e) });
+      if (isPasswordRequired(e)) {
+        // 交给父组件：关闭本弹窗、打开密码框，确认后带密码重新启动
+        onPasswordNeeded(request, passwordRequiredMessage(e));
+      } else {
+        toast.error("启动失败", { description: String(e) });
+      }
     } finally {
       setSubmitting(false);
     }

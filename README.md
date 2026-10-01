@@ -37,6 +37,7 @@ SSHTunnel/
 │       ├── AppHeader.tsx        # 内容区顶栏：说明文字 / 刷新 / 新建转发（标题不重复）
 │       ├── TunnelTable.tsx      # 隧道列表表格（含骨架屏、空状态）
 │       ├── NewTunnelDialog.tsx  # 新建转发弹窗（表单校验 + 命令预览）
+│       ├── PasswordDialog.tsx   # 密码认证弹窗（SSH_ASKPASS 注入，不落盘）
 │       ├── StatusBar.tsx        # 底部状态栏（计数、路径提示）
 │       ├── ThemeToggle.tsx      # 主题切换按钮
 │       ├── icons.tsx            # 手写 lucide 风格 SVG 图标
@@ -96,9 +97,9 @@ React UI ──invoke──▶ commands.rs ──▶ tunnel.rs ──▶ tokio::
 | --- | --- | --- |
 | `list_hosts` | – | `SshHost[]`（alias / hostname / user / port / identity_file） |
 | `list_tunnels` | – | `Tunnel[]`（记录 + `alive`） |
-| `start_tunnel` | `{ request: StartTunnelRequest }` | `Tunnel` |
+| `start_tunnel` | `{ request: StartTunnelRequest, password?: string }` | `Tunnel`（需要密码时返回 `PASSWORD_REQUIRED::…`） |
 | `stop_tunnel` | `{ id }` | `Tunnel[]`（关闭进程、**保留记录**） |
-| `restart_tunnel` | `{ id }` | `Tunnel[]`（复用已保存记录重新拉起 ssh） |
+| `restart_tunnel` | `{ id, password?: string }` | `Tunnel[]`（复用已保存记录重新拉起 ssh） |
 | `remove_tunnel` | `{ id }` | `Tunnel[]`（显式删除；仅允许删除已停止的记录） |
 | `remove_tunnel` | `{ id }` | `Tunnel[]` |
 | `ssh_config_path` / `data_path` | – | `string` |
@@ -184,11 +185,24 @@ node scripts/gen-icons.mjs
 4. **托盘**：关闭窗口 = 隐藏到托盘；左键托盘图标切换窗口；右键菜单可显示窗口或
    「退出应用（保留隧道）」——默认不杀隧道，下次启动会自动恢复列表与状态。
 
-### 认证说明
+### 认证说明（密钥优先，密码自动探测）
 
-默认假设你已配置**密钥免密登录**（或 ssh-agent）。应用通过
-`stdin=null + stderr=pipe` 后台拉起 ssh，**不处理交互式密码输入**；
-如需密码登录，请配置密钥认证，或设置 `SSH_ASKPASS` 程序。
+1. **密钥认证**（推荐）：已配置密钥或 ssh-agent 时直接启动，无额外步骤。
+   另外新增 `-o StrictHostKeyChecking=accept-new`，首次连接新主机不再因
+   yes/no 询问在无终端环境下失败（已变更的主机密钥仍会硬失败）。
+2. **密码认证**：首次启动带 `-o BatchMode=yes` 快速探测（禁止交互、不会挂起）；
+   若 stderr 返回 `Permission denied (publickey,password)`（**方法列表里含
+   password** 才判定，仅允许公钥的服务器不会弹框），后端返回
+   `PASSWORD_REQUIRED::…`，前端弹出**密码输入框**，确认后带密码重新启动：
+   - 密码通过 `SSH_ASKPASS=<本程序> + SSH_ASKPASS_REQUIRE=force +
+     STM_ASKPASS_PWD=<密码>` 注入 ssh 子进程环境；
+     程序以辅助模式（带参数且检测到 `SSH_ASKPASS` 环境变量）被 ssh 拉起，
+     仅向 stdout 输出密码后立即退出，不启动 GUI、不写日志。
+   - 密码**只驻留内存与子进程环境，不写入 tunnels.json、不进日志**；
+     带密码时附加 `-o NumberOfPasswordPrompts=1`，密码错误会在弹窗内提示重输。
+   - Windows 下 askpass 路径优先取 8.3 短路径，兼容 `Program Files` 等带空格目录。
+   - 「启动已保存的转发」走同一条密码流程。
+3. 新建弹窗与命令预览中均可看到将执行的完整 `ssh -N -L …` 命令。
 
 `~/.ssh/config` 解析：支持 `Host`（一行多别名）、`HostName` / `User` / `Port` /
 `IdentityFile`、`Key=Value` 写法与 `#` 注释；忽略含 `*` `?` `!` 的通配符 Host 与 `Match` 块。

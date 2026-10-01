@@ -18,6 +18,10 @@ pub enum AppError {
     )]
     SshNotFound,
 
+    /// 服务器要求密码认证（前缀供前端识别并弹出密码框；内容为服务器原始提示）
+    #[error("PASSWORD_REQUIRED::{0}")]
+    PasswordRequired(String),
+
     /// ssh 进程启动后 800ms 内退出（端口占用、认证失败、连接被拒等）
     #[error("SSH 隧道启动失败：{reason}")]
     StartFailed { reason: String },

@@ -30,14 +30,17 @@ pub async fn list_tunnels(state: State<'_, AppState>) -> Result<Vec<TunnelView>,
     Ok(state.list_views())
 }
 
-/// 新建并启动一条转发
+/// 新建并启动一条转发。
+/// `password` 为空时先以 BatchMode 探测；服务器要求密码时返回
+/// `PASSWORD_REQUIRED::…`，前端据此弹出密码框后带密码重试。
 #[tauri::command]
 pub async fn start_tunnel(
     app: AppHandle,
     state: State<'_, AppState>,
     request: StartRequest,
+    password: Option<String>,
 ) -> Result<TunnelView, AppError> {
-    tunnel::start_tunnel(&app, state.inner(), request).await
+    tunnel::start_tunnel(&app, state.inner(), request, password).await
 }
 
 /// 关闭转发（终止 ssh 进程但**保留记录**，返回最新列表）
@@ -49,14 +52,15 @@ pub async fn stop_tunnel(
     tunnel::stop_tunnel(state.inner(), &id).await
 }
 
-/// 用已保存的记录重新启动隧道（复用配置，仅更新 PID）
+/// 用已保存的记录重新启动隧道（复用配置，仅更新 PID；密码语义同 start_tunnel）
 #[tauri::command]
 pub async fn restart_tunnel(
     app: AppHandle,
     state: State<'_, AppState>,
     id: String,
+    password: Option<String>,
 ) -> Result<Vec<TunnelView>, AppError> {
-    tunnel::restart_tunnel(&app, state.inner(), &id).await
+    tunnel::restart_tunnel(&app, state.inner(), &id, password).await
 }
 
 /// 显式删除记录（仅允许删除已停止的记录）

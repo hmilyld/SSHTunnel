@@ -4,11 +4,18 @@ import { Toaster, toast } from "sonner";
 
 import { AppHeader } from "@/components/AppHeader";
 import { NewTunnelDialog } from "@/components/NewTunnelDialog";
+import { PasswordDialog, type PasswordRequest } from "@/components/PasswordDialog";
 import { StatusBar } from "@/components/StatusBar";
 import { TitleBar } from "@/components/TitleBar";
 import { TunnelTable } from "@/components/TunnelTable";
 import { useTheme } from "@/hooks/useTheme";
-import { api, type Tunnel, type TunnelExited } from "@/lib/api";
+import {
+  api,
+  isPasswordRequired,
+  passwordRequiredMessage,
+  type Tunnel,
+  type TunnelExited,
+} from "@/lib/api";
 
 /** 自动刷新间隔（毫秒） */
 const POLL_INTERVAL = 3000;
@@ -22,6 +29,11 @@ export default function App() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [dataPath, setDataPath] = useState("");
+
+  // ===== 密码认证流程（服务器要求密码时由后端 PASSWORD_REQUIRED 触发） =====
+  const [pwdReq, setPwdReq] = useState<PasswordRequest | null>(null);
+  const [pwdBusy, setPwdBusy] = useState(false);
+  const [pwdError, setPwdError] = useState<string | null>(null);
 
   /**
    * 拉取列表。
@@ -99,11 +111,69 @@ export default function App() {
         description: `${t.bind}:${t.local_port} → ${t.remote_host}:${t.remote_port}`,
       });
     } catch (e) {
-      toast.error(`启动失败：${e}`);
-      void refresh(true);
+      if (isPasswordRequired(e)) {
+        setPwdError(null);
+        setPwdReq({
+          kind: "restart",
+          id: t.id,
+          label: `${t.host}   ${t.bind}:${t.local_port} → ${t.remote_host}:${t.remote_port}`,
+          message: passwordRequiredMessage(e),
+        });
+      } else {
+        toast.error(`启动失败：${e}`);
+        void refresh(true);
+      }
     } finally {
       setBusyId(null);
     }
+  };
+
+  /** 新建流程被后端判定为“需要密码”：关掉新建弹窗，改弹密码框 */
+  const handlePasswordNeeded = (
+    request: Parameters<typeof api.startTunnel>[0],
+    message: string,
+  ) => {
+    setDialogOpen(false);
+    setPwdError(null);
+    setPwdReq({ kind: "start", request, message });
+  };
+
+  /** 密码框确认：带密码重新执行挂起的启动/重启操作 */
+  const submitPassword = async (password: string) => {
+    const req = pwdReq;
+    if (!req) return;
+    setPwdBusy(true);
+    setPwdError(null);
+    try {
+      if (req.kind === "start") {
+        const tunnel = await api.startTunnel(req.request, password);
+        toast.success("隧道已启动", {
+          description: `${tunnel.host} → ${tunnel.bind}:${tunnel.local_port}（PID ${tunnel.pid}）`,
+        });
+      } else {
+        await api.restartTunnel(req.id, password);
+        toast.success("隧道已启动", { description: req.label });
+        void refresh(true);
+      }
+      setPwdReq(null);
+      void refresh(true);
+    } catch (e) {
+      if (isPasswordRequired(e)) {
+        // 密码错误：留在弹窗内提示，可直接重输
+        setPwdError(passwordRequiredMessage(e) || "密码错误，请重试");
+      } else {
+        toast.error(`启动失败：${e}`);
+        setPwdReq(null);
+      }
+    } finally {
+      setPwdBusy(false);
+    }
+  };
+
+  const cancelPassword = () => {
+    if (pwdBusy) return;
+    setPwdReq(null);
+    setPwdError(null);
   };
 
   /** 显式删除记录（仅已停止的记录可删除） */
@@ -159,6 +229,16 @@ export default function App() {
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         onStarted={handleStarted}
+        onPasswordNeeded={handlePasswordNeeded}
+      />
+
+      {/* 密码认证弹窗（新建 / 重启共用） */}
+      <PasswordDialog
+        req={pwdReq}
+        busy={pwdBusy}
+        error={pwdError}
+        onCancel={cancelPassword}
+        onSubmit={submitPassword}
       />
 
       {/* offset：避开顶部自绘标题栏 */}

@@ -108,16 +108,30 @@ pub struct TunnelExited {
     pub stderr: String,
 }
 
-/// 把 ssh 的退出状态与 stderr 归纳成人话
-fn explain_failure(status: std::process::ExitStatus, stderr: &str) -> String {
-    let stderr = stderr.trim();
-    let last_line = stderr
+/// 提取 stderr 中最后一条有意义的行（跳过 Warning）
+fn last_meaningful_line(stderr: &str) -> String {
+    stderr
         .lines()
         .rev()
         .find(|l| !l.trim().is_empty() && !l.trim_start().starts_with("Warning:"))
         .unwrap_or("")
         .trim()
-        .to_string();
+        .to_string()
+}
+
+/// 服务器是否“接受密码认证”（`Permission denied (publickey,password)`）
+///
+/// 满足两个条件才判定：明确拒绝认证，且方法列表里带 `password`——
+/// 只允许 publickey 的服务器不会触发密码框。
+fn is_password_required(stderr: &str) -> bool {
+    let lower = stderr.to_lowercase();
+    lower.contains("permission denied") && lower.contains("password")
+}
+
+/// 把 ssh 的退出状态与 stderr 归纳成人话
+fn explain_failure(status: std::process::ExitStatus, stderr: &str) -> String {
+    let stderr = stderr.trim();
+    let last_line = last_meaningful_line(stderr);
 
     let hint = {
         let lower = stderr.to_lowercase();
@@ -157,32 +171,100 @@ fn short_id() -> String {
     full[..8].to_string()
 }
 
+/// askpass 可执行文件路径。
+///
+/// Windows 下部分 OpenSSH 版本用空格分隔拼命令行，安装到
+/// `C:\Program Files\...` 等带空格路径时可能解析失败——优先取 8.3 短路径。
+#[cfg(windows)]
+fn askpass_exe_path() -> String {
+    use std::os::windows::ffi::OsStrExt;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetShortPathNameW(
+            lpsz_long_path: *const u16,
+            lpsz_short_path: *mut u16,
+            cch_buffer: u32,
+        ) -> u32;
+    }
+
+    let exe = std::env::current_exe().unwrap_or_default();
+    let wide: Vec<u16> = exe
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    unsafe {
+        let need = GetShortPathNameW(wide.as_ptr(), std::ptr::null_mut(), 0);
+        if need > 0 {
+            let mut buf = vec![0u16; need as usize];
+            let got = GetShortPathNameW(wide.as_ptr(), buf.as_mut_ptr(), need);
+            if got > 0 && got < need {
+                let short = String::from_utf16_lossy(&buf[..got as usize]);
+                if !short.contains(' ') {
+                    return short;
+                }
+            }
+        }
+    }
+    exe.to_string_lossy().into_owned()
+}
+
 /// 拉起一个 `ssh -L` 进程并完成 800ms 检活。
 ///
+/// - `password = None`：追加 `-o BatchMode=yes`（禁止任何交互，认证失败快速返回，
+///   由错误分类决定是否需要弹密码框）
+/// - `password = Some`：追加 `-o NumberOfPasswordPrompts=1` 并通过 `SSH_ASKPASS`
+///   把密码交给 ssh（askpass 即本程序的辅助模式）
+///
 /// 返回仍存活的 [`tokio::process::Child`] 与其 stderr 缓冲（由回收任务接管 wait）。
-async fn spawn_ssh(spec: &str, host: &str) -> Result<(tokio::process::Child, Arc<Mutex<String>>), AppError> {
+async fn spawn_ssh(
+    spec: &str,
+    host: &str,
+    password: Option<&str>,
+) -> Result<(tokio::process::Child, Arc<Mutex<String>>), AppError> {
+    let mut args: Vec<String> = vec![
+        "-N".into(),
+        "-o".into(),
+        "ExitOnForwardFailure=yes".into(),
+        "-o".into(),
+        "ServerAliveInterval=30".into(),
+        "-o".into(),
+        "ServerAliveCountMax=3".into(),
+        // 新主机自动按 TOFU 接受（已变更的主机密钥仍会硬失败），
+        // 避免首次连接时 yes/no 询问在无终端环境下卡死
+        "-o".into(),
+        "StrictHostKeyChecking=accept-new".into(),
+    ];
+    if password.is_some() {
+        args.push("-o".into());
+        args.push("NumberOfPasswordPrompts=1".into());
+    } else {
+        args.push("-o".into());
+        args.push("BatchMode=yes".into());
+    }
+    args.push("-L".into());
+    args.push(spec.into());
+    args.push(host.into());
+
     let mut cmd = tokio::process::Command::new("ssh");
-    cmd.args([
-        "-N",
-        "-o",
-        "ExitOnForwardFailure=yes",
-        "-o",
-        "ServerAliveInterval=30",
-        "-o",
-        "ServerAliveCountMax=3",
-        "-L",
-        spec,
-        host,
-    ])
-    .stdin(std::process::Stdio::null())
-    .stdout(std::process::Stdio::null())
-    .stderr(std::process::Stdio::piped())
-    // 句柄被丢弃时不杀进程：隧道归用户手动管理
-    .kill_on_drop(false);
+    cmd.args(&args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        // 句柄被丢弃时不杀进程：隧道归用户手动管理
+        .kill_on_drop(false);
 
     // Windows：不弹控制台黑窗
     #[cfg(windows)]
     cmd.creation_flags(0x0800_0000);
+
+    // 密码模式：让 ssh 通过 askpass（本程序）取密码，密码只进子进程环境
+    if let Some(pwd) = password {
+        cmd.env("SSH_ASKPASS", askpass_exe_path());
+        cmd.env("SSH_ASKPASS_REQUIRE", "force");
+        cmd.env("STM_ASKPASS_PWD", pwd);
+    }
 
     let mut child = cmd.spawn().map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
@@ -221,6 +303,11 @@ async fn spawn_ssh(spec: &str, host: &str) -> Result<(tokio::process::Child, Arc
                 .unwrap_or_else(|e| e.into_inner())
                 .clone();
             tracing::warn!("ssh 启动后立即退出：{status}；stderr: {detail}");
+            // 分类一：服务器接受密码认证 → 交给前端弹密码框
+            //（已提供密码仍失败 = 密码错误，同样走此路径让用户重新输入）
+            if is_password_required(&detail) {
+                return Err(AppError::PasswordRequired(last_meaningful_line(&detail)));
+            }
             Err(AppError::StartFailed {
                 reason: explain_failure(status, &detail),
             })
@@ -254,10 +341,14 @@ fn spawn_watcher(
 }
 
 /// 新建一条隧道：启动 ssh + 记录落盘（记录此后长期保留）
+///
+/// `password` 为空时以 BatchMode 探测；若服务器要求密码会返回
+/// [`AppError::PasswordRequired`]，前端弹出密码框后带密码再次调用。
 pub async fn start_tunnel(
     app: &AppHandle,
     state: &AppState,
     req: StartRequest,
+    password: Option<String>,
 ) -> Result<TunnelView, AppError> {
     req.validate()?;
     let spec = req.spec();
@@ -276,7 +367,7 @@ pub async fn start_tunnel(
         }
     }
 
-    let (child, stderr_buf) = spawn_ssh(&spec, req.host.trim()).await?;
+    let (child, stderr_buf) = spawn_ssh(&spec, req.host.trim(), password.as_deref()).await?;
     let pid = child
         .id()
         .ok_or_else(|| AppError::StartFailed {
@@ -345,11 +436,13 @@ pub async fn stop_tunnel(state: &AppState, id: &str) -> Result<Vec<TunnelView>, 
     Ok(views)
 }
 
-/// 用保存的记录重新启动隧道（复用配置，ID/创建时间不变，仅更新 PID）
+/// 用保存的记录重新启动隧道（复用配置，ID/创建时间不变，仅更新 PID）。
+/// 密码语义与 [`start_tunnel`] 一致。
 pub async fn restart_tunnel(
     app: &AppHandle,
     state: &AppState,
     id: &str,
+    password: Option<String>,
 ) -> Result<Vec<TunnelView>, AppError> {
     let record = {
         let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
@@ -389,7 +482,7 @@ pub async fn restart_tunnel(
         }
     }
 
-    let (child, stderr_buf) = spawn_ssh(&spec, &record.host).await?;
+    let (child, stderr_buf) = spawn_ssh(&spec, &record.host, password.as_deref()).await?;
     let pid = child
         .id()
         .ok_or_else(|| AppError::StartFailed {
@@ -426,4 +519,39 @@ pub fn remove_record(state: &AppState, id: &str) -> Result<Vec<TunnelView>, AppE
     store.save()?;
     drop(store);
     Ok(state.list_views())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_password_required_only_when_password_offered() {
+        // 服务器接受密码认证 → 前端需要弹密码框
+        assert!(is_password_required(
+            "root@host's password: \nPermission denied (publickey,password)."
+        ));
+        // 大小写不敏感
+        assert!(is_password_required("Permission Denied (Publickey,Password)."));
+        // 只允许公钥 → 不弹密码框（弹了也没用）
+        assert!(!is_password_required("Permission denied (publickey)."));
+        // 网络类错误与密码无关
+        assert!(!is_password_required(
+            "ssh: connect to host x port 22: Connection refused"
+        ));
+    }
+
+    #[test]
+    fn password_error_carries_frontend_prefix() {
+        let e = AppError::PasswordRequired("Permission denied (publickey,password).".into());
+        assert!(e.to_string().starts_with("PASSWORD_REQUIRED::"));
+    }
+
+    #[test]
+    fn last_line_skips_warnings() {
+        let s = "Warning: Permanently added [1.2.3.4] (ED25519) to the list of known hosts.\nPermission denied (publickey,password).";
+        assert_eq!(
+            last_meaningful_line(s),
+            "Permission denied (publickey,password)."
+        );
+    }
 }
