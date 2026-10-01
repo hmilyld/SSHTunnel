@@ -1,6 +1,6 @@
 [package]
 name = "ssh-tunnel-manager"
-version = "0.1.0"
+version = "0.2.0"
 description = "跨平台 SSH 本地端口转发（ssh -L）管理器"
 authors = ["hmilyld"]
 edition = "2021"
