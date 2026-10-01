@@ -133,6 +133,82 @@ pub fn terminate(pid: u32, force: bool) -> Result<(), String> {
     }
 }
 
+/// 查询正在监听指定本地端口的进程，返回 `(pid, 进程名)`。
+///
+/// 仅在“端口被占用”的错误路径调用（单次 PowerShell，约 0.2~0.6s），
+/// 用于把报错从“端口被占用”升级为“被谁占用”。
+#[cfg(windows)]
+pub fn port_listener_info(port: u16) -> Option<(u32, String)> {
+    // 注意：format! 的花括号需转义；命令串内不使用引号，避免参数转义问题
+    let script = format!(
+        "$c=Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; \
+         if($c) {{ $p=Get-Process -Id $c.OwningProcess -ErrorAction SilentlyContinue; \
+         Write-Output $c.OwningProcess; Write-Output $p.ProcessName }}"
+    );
+    let out = run_hidden(
+        "powershell",
+        &["-NoProfile", "-NonInteractive", "-Command", &script],
+    )?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    let pid = lines.next()?.parse::<u32>().ok()?;
+    let name = lines.next().unwrap_or("unknown").to_string();
+    Some((pid, name))
+}
+
+/// 查询正在监听指定本地端口的进程，返回 `(pid, 进程名)`（lsof 优先，ss 兜底）
+#[cfg(unix)]
+pub fn port_listener_info(port: u16) -> Option<(u32, String)> {
+    // lsof -Fpc：输出字段行 p<pid> 与 c<command>
+    if let Some(out) = run_hidden(
+        "lsof",
+        &["-nP", &format!("-iTCP:{port}"), "-sTCP:LISTEN", "-Fpc"],
+    ) {
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut pid: Option<u32> = None;
+        let mut name: Option<String> = None;
+        for line in text.lines() {
+            if let Some(v) = line.strip_prefix('p') {
+                pid = v.trim().parse().ok();
+            } else if let Some(v) = line.strip_prefix('c') {
+                name = Some(v.trim().to_string());
+            }
+        }
+        if let (Some(p), Some(n)) = (pid, name) {
+            return Some((p, n));
+        }
+    }
+
+    // ss -ltnp 兜底（对非本用户进程可能看不到 pid，尽力而为）
+    let out = run_hidden("ss", &["-ltnp"])?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let port_tok = format!(":{port}");
+    for line in text.lines() {
+        // 行示例：LISTEN 0 511 127.0.0.1:5173 0.0.0.0:* users:(("node",pid=4968,fd=20))
+        let local_ok = line
+            .split_whitespace()
+            .any(|tok| tok.ends_with(&port_tok));
+        if !local_ok {
+            continue;
+        }
+        if let Some(start) = line.find("pid=") {
+            let rest = &line[start + 4..];
+            let pid: u32 = rest
+                .split(|c: char| c == ',' || c == ')')
+                .next()?
+                .trim()
+                .parse()
+                .ok()?;
+            let name = line
+                .find("(\"")
+                .map(|i| line[i + 2..].split('"').next().unwrap_or("unknown").to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            return Some((pid, name));
+        }
+    }
+    None
+}
+
 /// 优雅终止 → 最多等待 1.8s → 仍存活则强制终止 → 再等 1.8s。
 /// 调用方需先用 [`is_ssh_process`] 确认是本应用启动的 ssh 进程。
 pub async fn stop_process(pid: u32) -> Result<(), AppError> {
@@ -171,4 +247,21 @@ pub async fn stop_process(pid: u32) -> Result<(), AppError> {
         tokio::time::sleep(Duration::from_millis(150)).await;
     }
     Err(AppError::Process(format!("无法终止进程 PID {pid}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 端口占用检测：本测试进程自己监听一个随机端口，应能反查出自己的 pid/名字
+    #[test]
+    fn identifies_port_listener_process() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+
+        let info = port_listener_info(port).expect("应能查询到监听进程");
+        let (pid, name) = info;
+        assert_eq!(pid, std::process::id(), "监听者应是本测试进程");
+        assert!(!name.is_empty());
+    }
 }

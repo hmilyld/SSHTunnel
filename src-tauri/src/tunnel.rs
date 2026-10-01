@@ -403,7 +403,22 @@ async fn spawn_ssh(
 ) -> Result<(tokio::process::Child, Arc<Mutex<String>>), AppError> {
     // ===== 0. 环境预检：本地端口已被其他进程占用 → 立即明确报错（也不用浪费连接） =====
     if is_listening(bind, local_port).await {
-        return Err(AppError::PortInUse(format!("{bind}:{local_port}")));
+        let mut msg = format!("本地端口 {bind}:{local_port} 已被占用");
+        if let Some((pid, name)) = process::port_listener_info(local_port) {
+            msg.push_str(&format!(" — 占用进程：{name}（PID {pid}）"));
+            let lower = name.to_ascii_lowercase();
+            if local_port == 5173 && lower.starts_with("node") {
+                msg.push_str(
+                    "。提示：5173 是 Vite 开发服务器默认端口，若正在运行 pnpm dev / pnpm tauri dev，\
+                     请更换本地端口或先停止前端开发服务",
+                );
+            } else if lower.starts_with("ssh") {
+                msg.push_str(
+                    "。该进程疑似此前未正常关闭的 ssh -L 隧道残留，可先结束它或更换本地端口",
+                );
+            }
+        }
+        return Err(AppError::PortInUse(msg));
     }
 
     // ===== 1. 密码模式：先预检认证，密码错误在此阶段直接返回（不会出现“成功后立刻失败”） =====
@@ -572,7 +587,10 @@ pub async fn start_tunnel(
                 && process::is_ssh_process(r.pid)
         });
         if duplicated {
-            return Err(AppError::PortInUse(format!("{}:{}", req.bind, req.local_port)));
+            return Err(AppError::PortInUse(format!(
+                "本地端口 {}:{} 已被占用 — 已有正在运行的相同转发",
+                req.bind, req.local_port
+            )));
         }
     }
 
@@ -687,7 +705,7 @@ pub async fn restart_tunnel(
         });
         if duplicated {
             return Err(AppError::PortInUse(format!(
-                "{}:{}",
+                "本地端口 {}:{} 已被占用 — 已有另一条正在运行的转发使用它",
                 record.bind, record.local_port
             )));
         }
@@ -771,7 +789,7 @@ pub fn update_record(
     });
     if conflict {
         return Err(AppError::PortInUse(format!(
-            "{}:{}",
+            "本地端口 {}:{} 已被占用 — 与另一条正在运行的转发冲突",
             req.bind, req.local_port
         )));
     }

@@ -26,8 +26,8 @@ pub enum AppError {
     #[error("SSH 隧道启动失败：{reason}")]
     StartFailed { reason: String },
 
-    /// 本地绑定地址+端口已存在运行中的转发
-    #[error("本地端口 {0} 已被占用，或已存在相同的转发")]
+    /// 本地端口被占用（完整句子：调用方附上地址与占用进程等上下文）
+    #[error("{0}")]
     PortInUse(String),
 
     /// 按 id 找不到隧道记录

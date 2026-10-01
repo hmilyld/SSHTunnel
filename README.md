@@ -83,6 +83,7 @@ React UI ──invoke──▶ commands.rs ──▶ tunnel.rs ──▶ tokio::
 | 需求点 | 实现 |
 | --- | --- |
 | 启动成功判定 | **成功 = 本地 `bind:port` 真正进入监听**（每 150ms TCP 探测；ssh 认证通过后才会绑定 `-L` 监听），监听一出现立即返回，慢服务器不谎报成功；**失败 = 进程退出**（即时解析 stderr 归因：端口占用 / 密码错误 / 认证失败 / 连接被拒 / 主机名无法解析…）**或 18s 无监听**（杀进程报超时；ssh 自身 `ConnectTimeout=15` 通常先退出给出真实原因）。启动前还会预检本地端口是否已被**其他进程**占用（立即明确报错） |
+| 端口占用报错 | 报错中附带**占用进程名与 PID**（Windows 用 `Get-NetTCPConnection`，Unix 用 `lsof`/`ss`，仅错误路径触发）；5173 被 Node 进程占用时额外提示“Vite 开发服务器默认端口”，疑似 ssh 残留时也会提示——**只查本地监听，与远程端口是否存在无关** |
 | 状态判断 | `process.rs::is_ssh_process(pid)`：Windows 用 `tasklist`，macOS/Linux 用 `libc::kill(pid,0)` + `/proc` 或 `ps`；**校验进程名是 ssh**，防止 PID 复用误判/误杀 |
 | 关闭转发 | 先优雅（Windows `taskkill` / Unix `SIGTERM`）→ 最多等 1.8s → `taskkill /F` 或 `SIGKILL`；**保留记录**（PID 清零 → 「已停止」），配置长期保存可随时「启动」复用 |
 | 持久化 | `tunnels.json` 原子写（临时文件 + rename）；损坏时自动备份为 `.bak`；字段与需求文档一致（snake_case） |
