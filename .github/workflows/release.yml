@@ -1,0 +1,114 @@
+name: Release
+
+# 推送形如 v0.3.0 的 tag 时触发：编译各平台安装包并挂到同名 GitHub Release 上。
+# 版本号以 src-tauri/tauri.conf.json 的 version 为准（tauri-action 读取它写入 release），
+# 因此 tag 与配置必须一致，下面的「校验 tag 与版本号一致」会先拦下不一致的情况。
+on:
+  push:
+    tags:
+      - "v*"
+
+# 创建 Release 并上传安装包需要写权限（默认权限只有只读）
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: 编译 ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一个平台失败不影响另一个平台继续产出
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows 安装包（.exe / .msi）
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: windows-installers
+          - name: macOS 磁盘映像（.dmg）
+            os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: macos-dmg
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js（CI 统一用 npm，与本地 pnpm 无关）
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: 缓存 Rust 构建产物
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: 安装前端依赖
+        run: npm ci --no-audit --no-fund
+
+      # 版本号来源必须唯一：tag、tauri.conf.json、package.json 三者一致。
+      # 只做「行级文本匹配」，不做 JSON 解析，避免 Windows runner 上的编码坑。
+      - name: 校验 tag 与版本号一致
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "tag 必须是 vX.Y.Z 形式，当前为 $tag"
+          }
+          $version = $tag.Substring(1)
+          foreach ($file in @("src-tauri/tauri.conf.json", "package.json")) {
+            if (-not (Select-String -Path $file -Pattern "`"version`": `"$([regex]::Escape($version))`"" -Quiet)) {
+              throw "$file 的 version 与 tag $tag 不一致（应为 $version）"
+            }
+          }
+          Write-Output "版本号校验通过：$version"
+
+      # 先单独构建一次前端：tsc 类型错误会在这里直接失败，归因清楚。
+      # 之后 tauri-action 还会再跑一次 tauri.conf.json 的 beforeBuildCommand
+      #（同样是 npm run build），第二次命中缓存、开销可忽略。
+      - name: 构建前端（tsc 严格检查 + Vite 产出 dist/）
+        run: npm run build
+
+      # tauri-action 按 --target 编译 Rust，产出
+      # src-tauri/target/<target>/release/bundle/ 下的安装包，
+      # 并以 tag 名创建/复用 Release、上传安装包。
+      - name: 编译并发布安装包
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: src-tauri
+          tagName: ${{ github.ref_name }}
+          releaseName: "SSH 隧道管理器 ${{ github.ref_name }}"
+          releaseBody: |
+            跨平台 SSH 本地端口转发（ssh -L）管理器 —— https://hmilyld.com
+
+            Windows 用户下载 `*-setup.exe`（NSIS 安装包）或 `.msi` 即可；
+            macOS 用户下载 `.dmg`（未做代码签名，首次打开需在「系统设置 → 隐私与安全性」中放行）。
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }}
+          generateReleaseNotes: true
+          # 未配置签名密钥（bundle.createUpdaterArtifacts），不生成更新清单
+          uploadUpdaterJson: false
+
+      - name: 归档安装包（便于排查，不影响 Release）
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
+            src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg

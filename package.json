@@ -3,6 +3,14 @@
   "private": true,
   "version": "0.2.0",
   "type": "module",
+  "description": "跨平台 SSH 本地端口转发（ssh -L）管理器",
+  "author": "hmilyld <https://hmilyld.com>",
+  "homepage": "https://hmilyld.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hmilyld/SSHTunnel.git"
+  },
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

@@ -2,7 +2,9 @@
 name = "ssh-tunnel-manager"
 version = "0.2.0"
 description = "跨平台 SSH 本地端口转发（ssh -L）管理器"
-authors = ["hmilyld"]
+authors = ["hmilyld <https://hmilyld.com>"]
+homepage = "https://hmilyld.com"
+repository = "https://github.com/hmilyld/SSHTunnel"
 edition = "2021"
 rust-version = "1.77.2"
 
