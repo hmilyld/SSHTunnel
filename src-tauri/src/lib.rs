@@ -46,7 +46,8 @@ pub fn run() {
             commands::remove_tunnel,
             commands::update_tunnel,
             commands::ssh_config_path,
-            commands::data_path,
+            commands::data_dir,
+            commands::reveal_data_dir,
         ])
         // 关闭主窗口 = 隐藏到托盘，应用继续在后台运行
         .on_window_event(|window, event| {

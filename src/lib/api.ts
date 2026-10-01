@@ -87,6 +87,9 @@ export const api = {
   /** ~/.ssh/config 路径（界面提示用） */
   sshConfigPath: () => invoke<string>("ssh_config_path"),
 
-  /** 数据目录中 tunnels.json 的路径（界面提示用） */
-  dataPath: () => invoke<string>("data_path"),
+  /** 数据目录路径（tunnels.json / app.log 所在目录，用于按钮提示） */
+  dataDir: () => invoke<string>("data_dir"),
+
+  /** 在系统文件管理器中打开数据目录 */
+  revealDataDir: () => invoke<void>("reveal_data_dir"),
 };

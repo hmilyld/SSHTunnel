@@ -9,6 +9,9 @@ SSH 本地端口转发（`ssh -L`）：新建转发、实时查看状态、一�
 - 持久化：JSON 文件（`dirs` crate 解析的应用配置目录）
 - 托盘：Tauri 内置 Tray API（左键切换窗口，右键菜单：显示主窗口 / 退出）
 
+> **版权所有 © 2026 [hmilyld.com](https://hmilyld.com)** ·
+> 仓库：[github.com/hmilyld/SSHTunnel](https://github.com/hmilyld/SSHTunnel)（MIT License）
+
 ---
 
 ## 1. 项目结构
@@ -20,6 +23,8 @@ SSHTunnel/
 ├── vite.config.ts               # Vite + React + Tailwind 插件、@ 别名
 ├── tsconfig*.json               # TS 严格模式（app / node 两份）
 ├── index.html                   # 前端入口（首帧前应用主题，避免闪白）
+├── .github/workflows/
+│   └── release.yml              # 打 vX.Y.Z tag 时自动编译各平台安装包并发布 Release
 ├── scripts/
 │   ├── gen-icons.mjs            # 零依赖图标生成（PNG / ICO / ICNS）
 │   ├── screenshot.ps1           # 全屏截图（验证用）
@@ -38,7 +43,7 @@ SSHTunnel/
 │       ├── TunnelTable.tsx      # 隧道列表表格（含骨架屏、空状态）
 │       ├── NewTunnelDialog.tsx  # 新建转发弹窗（表单校验 + 命令预览）
 │       ├── PasswordDialog.tsx   # 密码认证弹窗（SSH_ASKPASS 注入，不落盘）
-│       ├── StatusBar.tsx        # 底部状态栏（计数、路径提示）
+│       ├── StatusBar.tsx        # 底部状态栏（计数、路径提示、版权 © hmilyld.com）
 │       ├── ThemeToggle.tsx      # 主题切换按钮
 │       ├── icons.tsx            # 手写 lucide 风格 SVG 图标
 │       └── ui/                  # shadcn/ui 风格基础组件
@@ -83,7 +88,7 @@ React UI ──invoke──▶ commands.rs ──▶ tunnel.rs ──▶ tokio::
 | 需求点 | 实现 |
 | --- | --- |
 | 启动成功判定 | **成功 = 本地 `bind:port` 真正进入监听**（每 150ms TCP 探测；ssh 认证通过后才会绑定 `-L` 监听），监听一出现立即返回，慢服务器不谎报成功；**失败 = 进程退出**（即时解析 stderr 归因：端口占用 / 密码错误 / 认证失败 / 连接被拒 / 主机名无法解析…）**或 18s 无监听**（杀进程报超时；ssh 自身 `ConnectTimeout=15` 通常先退出给出真实原因）。启动前还会预检本地端口是否已被**其他进程**占用（立即明确报错） |
-| 端口占用报错 | 报错中附带**占用进程名与 PID**（Windows 用 `Get-NetTCPConnection`，Unix 用 `lsof`/`ss`，仅错误路径触发）；5173 被 Node 进程占用时额外提示“Vite 开发服务器默认端口”，疑似 ssh 残留时也会提示——**只查本地监听，与远程端口是否存在无关** |
+| 端口占用报错 | 报错中附带**占用进程名与 PID**（Windows 用 `Get-NetTCPConnection`，Unix 用 `lsof`/`ss`，仅错误路径触发）；占用者是 Node 且端口正好是 **5173（Vite 开发服务器默认端口）**时额外提示，疑似 ssh 残留（进程名以 `ssh` 开头）时也会提示——**只查本地监听，与远程端口是否存在无关** |
 | 状态判断 | `process.rs::is_ssh_process(pid)`：Windows 用 `tasklist`，macOS/Linux 用 `libc::kill(pid,0)` + `/proc` 或 `ps`；**校验进程名是 ssh**，防止 PID 复用误判/误杀 |
 | 关闭转发 | 先优雅（Windows `taskkill` / Unix `SIGTERM`）→ 最多等 1.8s → `taskkill /F` 或 `SIGKILL`；**保留记录**（PID 清零 → 「已停止」），配置长期保存可随时「启动」复用 |
 | 持久化 | `tunnels.json` 原子写（临时文件 + rename）；损坏时自动备份为 `.bak`；字段与需求文档一致（snake_case） |
@@ -103,8 +108,8 @@ React UI ──invoke──▶ commands.rs ──▶ tunnel.rs ──▶ tokio::
 | `restart_tunnel` | `{ id, password?: string }` | `Tunnel[]`（复用已保存记录重新拉起 ssh） |
 | `update_tunnel` | `{ id, request }` | `Tunnel[]`（修改已停止记录的配置） |
 | `remove_tunnel` | `{ id }` | `Tunnel[]`（显式删除；仅允许删除已停止的记录） |
-| `remove_tunnel` | `{ id }` | `Tunnel[]` |
-| `ssh_config_path` / `data_path` | – | `string` |
+| `ssh_config_path` / `data_dir` | – | `string`（`data_dir` = tunnels.json / app.log 所在目录） |
+| `reveal_data_dir` | – | `()`（在资源管理器 / 访达中打开数据目录；路径由后端解析，不接受前端传参） |
 
 错误统一序列化为**中文字符串**，前端直接 toast 展示。
 
@@ -173,12 +178,54 @@ pnpm tauri build
 node scripts/gen-icons.mjs
 ```
 
+### 自动发版（GitHub Actions）
+
+`.github/workflows/release.yml`：推送形如 `vX.Y.Z` 的 tag 时自动编译安装包，
+并以同名 tag 创建 GitHub Release、上传安装包。
+
+```bash
+# 1. 先把版本号改好（工作流会校验 tag 与 package.json / tauri.conf.json 一致）
+#    package.json、src-tauri/tauri.conf.json、src-tauri/Cargo.toml 的 version
+# 2. 提交后打 tag 并推送
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+- 触发条件：tag 匹配 `v*`；tag 必须是 `vX.Y.Z`，且与 `package.json`、
+  `src-tauri/tauri.conf.json` 的 `version` 完全一致，否则任务在校验步骤直接失败
+  （避免发出版本号与包内版本对不上的安装包）。
+- **CI 与本地刻意使用不同的包管理器**：
+  - CI（GitHub Actions）：**npm** —— `npm ci --no-audit --no-fund`，依赖**提交的
+    `package-lock.json`**（lockfileVersion 3，220 个包）；CI 上不安装 pnpm。
+  - 本地开发：**pnpm** —— 依赖 `pnpm-lock.yaml`，延续仓库原有工作流
+    （`pnpm install` / `pnpm tauri dev` / `pnpm tauri build`）。
+  - **改依赖时要两个都更新**：`pnpm add <pkg>` 之后再跑一次
+    `npm install --package-lock-only`（若本机 node_modules 是 pnpm 结构，直接在工作区跑
+    npm 可能报错，可先把 `package.json` 复制到空目录生成 lockfile 再拷回）。
+    只改一个的后果：CI 的 `npm ci` 会因 lockfile 与 package.json 不匹配而失败
+    ——这是有意的失败快停，而不是静默装上不同版本的依赖。
+  - 两者解析出的版本一致（同一份 semver 范围），差异只在 node_modules 布局
+    与依赖提升方式，不影响构建产物。
+  - `tauri.conf.json` 的 `beforeBuildCommand` 用 **`npm run build`**（而不是 `pnpm build`）：
+    它必须在只有 npm 的 CI 里也能跑通。本地即使依赖是 pnpm 装的也能正常执行
+    ——`npm run build` 读的是同一份 `package.json` scripts；`beforeDevCommand` 仍是
+    `pnpm dev`，本地开发流程不变。
+- 产物矩阵：
+  - `windows-latest` → `x86_64-pc-windows-msvc`：NSIS `*-setup.exe` 与 WiX `.msi`
+  - `macos-latest` → `aarch64-apple-darwin`：`.dmg`（未做签名/公证）
+- Release 正文包含下载指引，并自动追加 GitHub 生成的 Release Notes；
+  同时把安装包作为 workflow artifact 归档一份，便于排查。
+- 权限：仅需仓库默认 `GITHUB_TOKEN`（工作流显式声明 `permissions: contents: write`），
+  无需配置任何 secret。
+- 未配置签名密钥，因此不生成 Tauri updater 清单（`uploadUpdaterJson: false`）。
+
 ## 5. 使用说明
 
 1. **新建转发**：点击右上角「新建转发」→ 选择 `~/.ssh/config` 中的 Host →
    填远程主机（默认 `localhost`）、远程端口、本地端口（默认跟随远程端口）、
-   绑定地址（默认 `127.0.0.1`，可改 `0.0.0.0`）→「启动转发」。
-   弹窗会实时预览将执行的 `ssh -N -L …` 命令；约 1 秒后返回列表并显示**运行中**。
+   绑定地址（远程主机为 `localhost` / `127.0.0.1` 时按联动规则取同名本机地址，
+   也可手动改为 `0.0.0.0`）→「启动转发」。
+   弹窗会实时预览将执行的 `ssh -N -L …` 命令；**等本地端口真正进入监听**才返回列表
+   并显示**运行中**（慢服务器不会提前报成功，失败会给出具体原因）。
 2. **查看状态**：表格展示 ID / Host / 本地地址 / 远程地址 / PID / 创建时间 / 状态；
    每 3 秒自动刷新，也可点「刷新」；ssh 进程中途退出会立即收到通知并转为**已停止**。
 3. **关闭 / 修改 / 复用 / 删除**：点「关闭」→ 终止进程但**保留记录**（已停止）；
@@ -232,7 +279,7 @@ node scripts/gen-icons.mjs
 │ a1b2c3d4 web   0.0.0.0:8080   127.0.0.1:80  …    …   ●已停止│   空状态/骨架屏）
 │                              [关闭] / [启动][修改][删除]      │
 ├──────────────────────────────────────────────────────────────┤
-│ 共 2 条隧道 · ●运行中 1 · ●已停止 1        每3秒刷新 · 托盘  │  状态栏
+│ 共 2 条隧道 · ●运行中 1 · ●已停止 1        v0.2.0 · © 2026 hmilyld.com · [📁] │  底部信息栏
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -242,6 +289,16 @@ node scripts/gen-icons.mjs
   托盘图标的原生右键菜单保留。
 - 新建弹窗：表单式布局 + 命令实时预览 + 字段级中文校验提示；端口范围 1-65535。
 - 反馈：操作结果通过右上角 Toast（sonner）提示，失败信息为后端原始中文错误。
+- **底部信息栏**（左：状态统计；右：版本 / 版权 / 数据目录入口）：
+  - 版本号 `vX.Y.Z` 取自 `tauri.conf.json`（Tauri `getVersion()`，无需额外命令），
+    与安装包版本天然一致；取不到时该段隐藏，不显示占位符。
+  - 版权 `© 2026 hmilyld.com`（纯文本，不做外链跳转——不为此引入 opener 权限）。
+  - 数据目录入口是**按钮**而非整行路径：点击在资源管理器 / 访达中打开数据目录，
+    悬停提示里给出完整路径。长路径不再铺在界面上（既占位又不可点）。
+    安全边界：命令只打开**后端自己解析**的数据目录，不接受前端传入路径，
+    因此即使 WebView 侧被注入也无法借它打开任意路径。
+  - 已移除「每 3 秒自动刷新」「关闭窗口将最小化到托盘」两条静态说明：
+    前者对使用无帮助，后者在标题栏关闭按钮的 tooltip 里已有说明。
 
 ## 7. 已验证（Windows 11 实机，2026-09-30）
 
@@ -249,19 +306,19 @@ node scripts/gen-icons.mjs
 
 | 项目 | 结果 |
 | --- | --- |
-| `cargo check` / `cargo build`（MSVC，433 个依赖） | ✅ 0 error / 0 warning |
-| `cargo test`（ssh_config 解析 ×2、store JSON 序列化 ×1） | ✅ 3 passed |
-| `pnpm build`（`tsc -b` 严格模式 + Vite 产物 398 kB） | ✅ exit 0 |
-
+| `cargo check --all-targets` | ✅ 0 error / 0 warning |
+| `cargo build`（MSVC，433 个依赖） | ✅ 0 error（仅 MSVC 链接器输出一条 `linker stdout` 提示，非代码告警） |
+| `cargo test`（ssh_config ×2、store ×1、process ×1、tunnel ×5） | ✅ 9 passed |
+| `pnpm build`（`tsc -b` 严格模式 + Vite 产物 421.4 kB，gzip 132.7 kB） | ✅ exit 0 |
 ### 功能 E2E（真实 UI 操作 + 文件/进程断言）
 
 | 场景 | 结果与证据 |
 | --- | --- |
 | 启动加载 | 日志 `已加载 N 条隧道记录`、`系统托盘已创建`；`tunnels.json` 正确读入 ✅ |
-| 状态检测（运行中/已停止/死 PID） | 3 条记录状态全部正确，PID 划线、按钮按状态切换（运行中→关闭，已停止→清理）✅ |
+| 状态检测（运行中/已停止/死 PID） | 3 条记录状态全部正确，PID 划线、按钮按状态切换（运行中→关闭，已停止→启动/修改/删除）✅ |
 | 进程外部退出自动翻转 | 演示 ssh 进程定时到期死亡 → 轮询 3s 内 UI 自动转为「已停止」（记录保留）✅ |
 | 关闭转发 E2E | 点击「关闭」→ **524ms** 内进程被终止（优雅→强制）→ 记录 3→2 → 绿色 Toast「已关闭转发 staging-web」，`tunnels.json` 同步 ✅ |
-| 清理记录 | 两条已停止记录逐个清理 → `tunnels.json` = `[]`，界面进入空状态 ✅ |
+| 删除记录 | 两条已停止记录逐个删除 → `tunnels.json` = `[]`，界面进入空状态 ✅ |
 | 新建转发弹窗 | UIA 点击打开 → 命令实时预览、端口占位符/校验、无 Host 时的琥珀色配置提示均正常 ✅ |
 | 深/浅主题 | 切换生效且按钮图标联动（日/月），localStorage 持久化 ✅ |
 | 关闭窗口 → 托盘 | 点标题栏 ✕ 后窗口隐藏、进程仍存活（日志无退出）✅ |
@@ -285,7 +342,64 @@ node scripts/gen-icons.mjs
 | 关闭后保留记录 | `stop_tunnel` 不再删除记录（PID 清零→已停止）；新增 `restart_tunnel` 复用记录重新拉起；`remove_tunnel` 仅允许删除已停止记录 | `cargo check` / `pnpm build` 通过，交互由用户实测 |
 | 标题去重 | 自绘标题栏保留窗口标题；内容区去掉重复 logo+大标题，仅留说明文字与操作按钮 | 同上 |
 
-### 已知边界 / 待真机补充
+## 8. 代码复查与清理（2026-09-30）
+
+本轮对全部源码（Rust 10 个模块 + 前端 22 个文件 + 配置）做了简洁性 / 规范性 / 安全性 /
+逻辑复查，改动如下（均已通过 `cargo check --all-targets` + `cargo test`（9 passed）+
+`pnpm build` 重新验证）：
+
+### 新增功能（同日）
+
+| 功能 | 实现 |
+| --- | --- |
+| **版权显示** | 底部信息栏常驻 `© 2026 hmilyld.com`；元数据同步到 `package.json`（`author`/`homepage`/`repository`/`license`）与 `src-tauri/Cargo.toml`（`authors`/`homepage`/`repository`）；README 顶部加版权行 |
+| **打 tag 自动发版** | 新增 `.github/workflows/release.yml`：推送 `vX.Y.Z` tag → 校验 tag 与 `package.json`/`tauri.conf.json` 版本一致 → 矩阵编译 `windows-latest`（NSIS `*-setup.exe` + WiX `.msi`）与 `macos-latest`（`.dmg`）→ 以 tag 创建 Release 并上传安装包；另归档一份 workflow artifact。**CI 依赖 npm（`package-lock.json`），本地仍是 pnpm** |
+| **底部信息栏重设计** | 去掉整行数据路径（改为「打开数据目录」按钮 + 悬停提示完整路径）；新增版本号 `vX.Y.Z`（`getVersion()`）；移除两条无信息量的静态说明。新增 `data_dir` / `reveal_data_dir` 命令（后者只打开后端解析的目录，不接受前端传参），并清理 `capabilities/default.json` 中 4 条未使用的窗口权限 |
+
+### 逻辑修复
+
+| 问题 | 位置 | 修复 |
+| --- | --- | --- |
+| **全新安装首次启动不写 `app.log`**：日志初始化早于 `tunnels.json` 首次保存，而数据目录此前只由 `Store::save` 创建 | `logging.rs` | 初始化时先 `create_dir_all` 数据目录 |
+| **保存失败会留下“无人管理”的 ssh 进程**：记录先入内存、`save()` 失败即返回错误，进程仍在跑且不在列表里 | `tunnel.rs::start_tunnel` / `restart_tunnel` | `save()` 失败时回滚内存记录（PID 归零）并 `kill + wait` 回收刚拉起的 ssh |
+| **超时/预检失败的 ssh 子进程未回收**：`kill_on_drop(false)` 下只 `start_kill()` 不 `wait()`，会留下僵尸句柄 | `tunnel.rs` | 新增 `kill_unstarted()`，统一 `start_kill + wait`，三处失败路径复用 |
+| **8 位短 ID 未排重**：ID 是记录唯一键，碰撞会让记录无法单独操作、ssh 进程杀不掉 | `tunnel.rs` | 新增 `unique_id()`，生成时对现有记录排重并告警 |
+| 端口冲突判定在三处重复实现 | `tunnel.rs` | 抽出 `local_port_taken(store, exclude_id, bind, port)`，语义与 `list_views` 的存活判定保持一致 |
+
+### 清理（删除无用代码 / 修正与代码不符的说明）
+
+- 删除未被任何地方使用的图标 `ArrowRightIcon`、`ActivityIcon`、`FileIcon`
+  （`FileIcon` 随状态栏路径行一起下线）。
+- 删除随路径行一起失去调用方的 `data_path` 命令与 `api.dataPath()` 包装；
+  新增的 `data_dir` 只用于按钮的悬停提示。
+- `capabilities/default.json` 去掉未被任何前端调用使用的
+  `core:window:allow-maximize` / `allow-unmaximize` / `allow-show` / `allow-set-focus`
+  （`toggleMaximize` 自带最大化与还原，不需要单独权限）。
+- `useTheme` 不再对外返回无调用方的 `setTheme`（内部保留为 `applyTheme`）。
+- 修正与代码不符的注释：`tunnel.rs` 模块头仍写「800ms 检活」、`error.rs::StartFailed`
+  仍写「800ms 内退出」——实际实现是「每 150ms 探测本地端口监听，18s 超时」。
+- `README.md`：测试数量 3 → 9、命令表删除重复的 `remove_tunnel` 行、
+  新建转发的绑定地址默认值改为与 `NewTunnelDialog` 联动规则一致、
+  「刷新」中的「清理」（按钮实际已更名「删除」）等表述对齐。
+- 保留 `src/components/ui/` 下 shadcn 风格基础组件中暂未使用的 variant / 子组件
+  （`Button` 的 `destructive`/`link`、`Dialog` 的 `DialogTrigger`/`DialogClose`、
+  `Select` 的 `SelectGroup`/`Label`/`Separator`、`Badge` 的 `danger`/`warning` 等）：
+  它们是组件库的约定 API，删除会让后续新增界面必须改基础组件，属于脚手架而非死代码。
+
+### 安全性结论（未发现漏洞，供后续维护参考）
+
+- 密码只以子进程环境变量（`SSH_ASKPASS` + `STM_ASKPASS_PWD`）传递，不落盘、不进日志；
+  `askpass` 辅助模式只写 stdout。已确认全部 `tracing` 调用点都不含密码。
+- `main.rs` 的辅助模式需要「带参数 + 有 `SSH_ASKPASS` 环境变量」两个条件同时成立，
+  正常 GUI 启动（无参数）不会误打印密码。
+- 所有外部命令（`ssh` / `tasklist` / `taskkill` / `powershell` / `lsof` / `ss`）都通过
+  参数数组传参，端口是 `u16`，不存在命令注入路径；终止进程前强制校验进程名是 `ssh`，
+  避免 PID 复用导致误杀。
+- 已知项：`tauri.conf.json` 的 `csp` 为 `null`（未设置 CSP）。因为不加载任何远程内容、
+  未开启 `withGlobalTauri`、能力集只放开了自绘标题栏所需的窗口权限，风险很低；
+  若要加固可在此补一条 `default-src 'self'` 级别的策略。
+
+## 9. 已知边界 / 待真机补充
 
 - **启动成功路径**需要真实可达的 SSH 主机与密钥：功能验证阶段本机尚未配置
   `~/.ssh/config`，故对 `start_tunnel` 覆盖的是其失败分支（端口占用预检、

@@ -52,12 +52,20 @@ impl Write for TeeWriter {
 
 pub fn init() {
     let dir = crate::store::Store::data_dir();
+    let log_path = dir.join("app.log");
+
+    // 日志初始化早于 tunnels.json 的首次保存，因此数据目录必须由这里创建：
+    // 否则全新安装的首次启动会静默拿不到 app.log。
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("无法创建数据目录 {}：{e}", dir.display());
+    }
+
     let file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(dir.join("app.log"))
+        .open(&log_path)
         .map_err(|e| {
-            eprintln!("无法打开日志文件 {}：{e}", dir.join("app.log").display());
+            eprintln!("无法打开日志文件 {}：{e}", log_path.display());
             e
         })
         .ok()
@@ -72,5 +80,5 @@ pub fn init() {
         .with_writer(FileAndStdout { file })
         .init();
 
-    tracing::info!("日志初始化完成，文件：{}", dir.join("app.log").display());
+    tracing::info!("日志初始化完成，文件：{}", log_path.display());
 }

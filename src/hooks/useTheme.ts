@@ -18,11 +18,16 @@ export function getTheme(): Theme {
   return prefersDark ? "dark" : "light";
 }
 
-/** 深色/浅色主题切换：写 <html class="dark"> + localStorage */
+/**
+ * 深色/浅色主题切换：写 `<html class="dark">` + localStorage。
+ *
+ * 只对外暴露 `theme` 与 `toggle`：显式设置主题（`setTheme`）目前没有调用方，
+ * 保留在内部即可，避免出现“看似可用却没有界面入口”的 API。
+ */
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(getTheme);
 
-  const setTheme = useCallback((next: Theme) => {
+  const applyTheme = useCallback((next: Theme) => {
     document.documentElement.classList.toggle("dark", next === "dark");
     try {
       localStorage.setItem(STORAGE_KEY, next);
@@ -33,8 +38,8 @@ export function useTheme() {
   }, []);
 
   const toggle = useCallback(() => {
-    setTheme(getTheme() === "dark" ? "light" : "dark");
-  }, [setTheme]);
+    applyTheme(getTheme() === "dark" ? "light" : "dark");
+  }, [applyTheme]);
 
-  return { theme, setTheme, toggle };
+  return { theme, toggle };
 }

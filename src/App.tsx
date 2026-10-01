@@ -30,7 +30,6 @@ export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false);
   /** 正在修改的已停止记录（null = 新建模式） */
   const [editing, setEditing] = useState<Tunnel | null>(null);
-  const [dataPath, setDataPath] = useState("");
 
   // ===== 密码认证流程（服务器要求密码时由后端 PASSWORD_REQUIRED 触发） =====
   const [pwdReq, setPwdReq] = useState<PasswordRequest | null>(null);
@@ -79,14 +78,6 @@ export default function App() {
       unlisten?.();
     };
   }, [refresh]);
-
-  // 状态栏展示数据文件路径
-  useEffect(() => {
-    api
-      .dataPath()
-      .then(setDataPath)
-      .catch(() => {});
-  }, []);
 
   /** 关闭转发：终止进程但保留记录（之后可随时启动复用） */
   const handleStop = async (t: Tunnel) => {
@@ -246,7 +237,7 @@ export default function App() {
           />
         </main>
 
-        <StatusBar total={tunnels.length} running={running} dataPath={dataPath} />
+        <StatusBar total={tunnels.length} running={running} />
       </div>
 
       <NewTunnelDialog

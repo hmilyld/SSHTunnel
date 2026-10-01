@@ -92,13 +92,6 @@ export const ServerIcon = (p: IconProps) => (
   </Icon>
 );
 
-export const ArrowRightIcon = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M5 12h14" />
-    <path d="m12 5 7 7-7 7" />
-  </Icon>
-);
-
 export const CheckIcon = (p: IconProps) => (
   <Icon {...p}>
     <path d="M20 6 9 17l-5-5" />
@@ -126,16 +119,9 @@ export const TerminalIcon = (p: IconProps) => (
   </Icon>
 );
 
-export const ActivityIcon = (p: IconProps) => (
+export const FolderIcon = (p: IconProps) => (
   <Icon {...p}>
-    <path d="M22 12h-2.48a2 2 0 0 0-1.93 1.46l-2.35 8.36a.25.25 0 0 1-.48 0L9.24 2.18a.25.25 0 0 0-.48 0l-2.35 8.36A2 2 0 0 1 4.49 12H2" />
-  </Icon>
-);
-
-export const FileIcon = (p: IconProps) => (
-  <Icon {...p}>
-    <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-    <path d="M14 2v6h6" />
+    <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
   </Icon>
 );
 

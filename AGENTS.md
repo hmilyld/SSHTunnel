@@ -16,9 +16,10 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
 
 - Node is managed by **fnm**; run this prefix before any `pnpm` command:
   `fnm env --use-on-cd --shell powershell | Out-String | Invoke-Expression`
-- Package manager is **pnpm** — never npm/yarn. Allowed build scripts live in
+- Package manager is **pnpm** for all local work — never npm/yarn. Allowed build scripts live in
   `pnpm-workspace.yaml` → `allowBuilds:` (pnpm 11+ removed `package.json#pnpm.onlyBuiltDependencies`;
   `ERR_PNPM_IGNORED_BUILDS` means this key is wrong/missing).
+  The one npm exception is regenerating `package-lock.json` for CI (see Conventions).
 - **Cargo needs the proxy** or crates.io crawls: `$env:CARGO_HTTP_PROXY="http://127.0.0.1:7897"`.
   Same value for `HTTPS_PROXY`/`HTTP_PROXY` when using git/gh.
 - Verify (order doesn't matter, both are required):
@@ -77,3 +78,22 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
   push verified changes to `origin/main` (github.com/hmilyld/SSHTunnel, public).
 - Don't commit screenshots/build artifacts (`node_modules`, `dist`, `src-tauri/target`,
   `src-tauri/gen/schemas` are gitignored).
+- **Releasing = push a `vX.Y.Z` tag.** `.github/workflows/release.yml` then builds the
+  installers (Windows NSIS `.exe` + WiX `.msi`, macOS `.dmg`) and publishes a GitHub Release.
+  Bump `version` in `package.json` **and** `src-tauri/tauri.conf.json` (Cargo.toml too, for
+  consistency) first: the workflow hard-fails when the tag and those files disagree.
+- **Two package managers on purpose, and two lockfiles to keep in sync:**
+  - CI (GitHub Actions) uses **npm** — `npm ci`, driven by the committed `package-lock.json`.
+  - Local development uses **pnpm** — `pnpm install`, driven by `pnpm-lock.yaml`.
+  - After changing dependencies run `pnpm add/remove …` **and** regenerate the npm lockfile
+    (`npm install --package-lock-only` in a clean dir holding just `package.json`, then copy the
+    file back — running npm directly in this workspace can fail on pnpm's `node_modules` layout).
+    If only one is updated, CI fails fast at `npm ci` instead of silently installing different
+    versions. `tauri.conf.json` → `beforeBuildCommand` is `npm run build` on purpose: it must also
+    work in CI, where only npm exists. Local installs stay pnpm-driven; `npm run build` reads the
+    same `package.json` scripts, and `beforeDevCommand` remains `pnpm dev`.
+- Copyright/author metadata lives in three places and must stay in sync:
+  `package.json` (`author`/`homepage`), `src-tauri/Cargo.toml` (`authors`/`homepage`), and the
+  footer line in `src/components/StatusBar.tsx` (`© 2026 hmilyld.com`).
+- The footer's data-folder button calls `reveal_data_dir`, which opens the directory the
+  **backend** resolves (`Store::data_dir`); never add a command that opens a caller-supplied path.

@@ -1,7 +1,7 @@
 //! 隧道生命周期核心：启动 `ssh -L`、状态查询、停止与重启。
 //!
 //! 生命周期设计（记录持久化，除非用户明确删除）：
-//! - **新建**：校验参数 → 启动 ssh → 800ms 检活 → 记录落盘（此后一直保留）
+//! - **新建**：校验参数 → 启动 ssh → 等待本地端口进入监听 → 记录落盘（此后一直保留）
 //! - **关闭**：终止进程（优雅→强制）→ **保留记录**，PID 清零、状态变为「已停止」
 //! - **启动**（复用）：用保存的记录重新拉起 ssh，更新 PID；记录与 ID 不变
 //! - **删除**：仅在记录已停止时由用户显式移除
@@ -11,8 +11,9 @@
 //!    `ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -L <spec> <host>`
 //!    - Windows 下附加 `CREATE_NO_WINDOW`，不弹控制台黑窗
 //!    - stderr 用后台任务持续读取（失败归因 + 防止管道写满阻塞 ssh）
-//! 2. 等待 800ms 后 `try_wait()`：已退出则解析 stderr 给出友好失败原因
-//! 3. 存活 → 启动“回收任务”（ssh 退出时向前端广播 `tunnel-exited` 即时刷新）
+//! 2. 每 150ms 探测本地 `bind:port` 是否进入监听：出现即就绪（ssh 认证通过后才会绑定）；
+//!    进程自行退出则解析 stderr 给出友好失败原因；18s 仍无监听则超时失败
+//! 3. 就绪后启动“回收任务”（ssh 退出时向前端广播 `tunnel-exited` 即时刷新）
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -108,6 +109,19 @@ pub struct TunnelExited {
     pub stderr: String,
 }
 
+/// 终止一个「尚未交给回收任务」的 ssh 子进程并回收它。
+///
+/// ssh 是 `kill_on_drop(false)` 启动的（隧道要能被用户长期持有），因此失败/超时路径
+/// 必须显式 kill + `wait`：只 kill 不 wait 会留下僵尸进程句柄。
+async fn kill_unstarted(child: &mut tokio::process::Child) {
+    if let Err(e) = child.start_kill() {
+        tracing::debug!("终止未启动完成的 ssh 进程失败：{e}");
+    }
+    if let Err(e) = child.wait().await {
+        tracing::debug!("回收未启动完成的 ssh 进程失败：{e}");
+    }
+}
+
 /// 提取 stderr 中最后一条有意义的行（跳过 Warning）
 fn last_meaningful_line(stderr: &str) -> String {
     stderr
@@ -155,20 +169,43 @@ fn explain_failure(status: std::process::ExitStatus, stderr: &str) -> String {
         }
     };
 
-    let detail = if last_line.is_empty() {
+    if last_line.is_empty() {
         format!("ssh 进程已退出（{status}）")
     } else if hint.is_empty() {
         last_line
     } else {
         format!("{hint}（{last_line}）")
-    };
-    detail
+    }
 }
 
 /// 生成 8 位短 ID（截断 UUID v4）
 fn short_id() -> String {
     let full = uuid::Uuid::new_v4().simple().to_string();
     full[..8].to_string()
+}
+
+/// 在 `store` 中生成一个未被占用的 8 位 ID。
+///
+/// 8 位十六进制空间虽大，但 ID 是记录的唯一定位键（`get`/`remove`/`update` 都按 ID 匹配）；
+/// 一旦碰撞，后加入的记录将无法被单独操作、并可能留下杀不掉的 ssh 进程，
+/// 因此这里显式排重，而不是假装碰撞不可能发生。
+fn unique_id(store: &Store) -> String {
+    loop {
+        let id = short_id();
+        if store.get(&id).is_none() {
+            return id;
+        }
+        tracing::warn!("生成的隧道 ID {id} 已被占用，重新生成");
+    }
+}
+
+/// `bind:port` 是否已被**运行中**的隧道占用（`exclude_id` 用于跳过记录自身）。
+///
+/// “运行中”= PID 非 0 且当前确实是 ssh 进程，与 [`AppState::list_views`] 的判定一致。
+fn local_port_taken(store: &Store, exclude_id: &str, bind: &str, port: u16) -> bool {
+    store.list().iter().any(|r| {
+        r.id != exclude_id && r.bind == bind && r.local_port == port && r.pid > 0 && process::is_ssh_process(r.pid)
+    })
 }
 
 /// askpass 可执行文件路径。
@@ -247,6 +284,9 @@ fn password_probe_args(host: &str) -> Vec<String> {
 /// - 返回 `Err(PasswordRequired)`：服务器明确拒绝（密码错误）→ 前端在密码弹窗内红字提示
 /// - 返回 `Ok(())`：认证通过；或预检无法判定（连接类错误/超时）——
 ///   交由后续真正的隧道启动给出真实错误，不阻塞用户
+///
+/// 注意预检只等 5s，而 `ssh` 自身的 `ConnectTimeout=10`：连不上的主机不会被这里判死，
+/// 一律 fail-open，由真正的隧道启动（`ConnectTimeout=15` + 18s 监听超时）给出错误。
 async fn verify_password_auth(host: &str, password: &str) -> Result<(), AppError> {
     let mut cmd = tokio::process::Command::new("ssh");
     cmd.args(password_probe_args(host))
@@ -315,7 +355,7 @@ async fn verify_password_auth(host: &str, password: &str) -> Result<(), AppError
             Ok(None) => {
                 if std::time::Instant::now() >= deadline {
                     tracing::warn!("密码预检超过 5s 未结束，放弃判定并继续启动隧道");
-                    let _ = child.start_kill();
+                    kill_unstarted(&mut child).await;
                     return Ok(());
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -525,7 +565,8 @@ async fn spawn_ssh(
             }
             Ok(None) => {
                 if std::time::Instant::now() >= deadline {
-                    let _ = child.start_kill();
+                    // 超时兜底：杀掉并回收，绝不把 ssh 进程留在后台
+                    kill_unstarted(&mut child).await;
                     return Err(AppError::StartFailed {
                         reason: format!(
                             "建立隧道超时：18 秒内 {bind}:{local_port} 未进入监听（服务器连接/认证过慢，或本地端口被防火墙拦截）"
@@ -580,13 +621,7 @@ pub async fn start_tunnel(
     // 预检：同一 bind:local_port 已有运行中的转发，提前给出友好错误
     {
         let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
-        let duplicated = store.list().iter().any(|r| {
-            r.bind == req.bind
-                && r.local_port == req.local_port as u16
-                && r.pid > 0
-                && process::is_ssh_process(r.pid)
-        });
-        if duplicated {
+        if local_port_taken(&store, "", &req.bind, req.local_port as u16) {
             return Err(AppError::PortInUse(format!(
                 "本地端口 {}:{} 已被占用 — 已有正在运行的相同转发",
                 req.bind, req.local_port
@@ -594,7 +629,7 @@ pub async fn start_tunnel(
         }
     }
 
-    let (child, stderr_buf) =
+    let (mut child, stderr_buf) =
         spawn_ssh(&spec, req.host.trim(), password.as_deref(), &req.bind, req.local_port as u16)
             .await?;
     let pid = child
@@ -604,21 +639,36 @@ pub async fn start_tunnel(
         })?;
 
     // ===== 持久化（关闭后也不会丢失，除非用户显式删除） =====
-    let record = TunnelRecord {
-        id: short_id(),
-        host: req.host.trim().to_string(),
-        bind: req.bind.trim().to_string(),
-        local_port: req.local_port as u16,
-        remote_host: req.remote_host.trim().to_string(),
-        remote_port: req.remote_port as u16,
-        pid,
-        created_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-    };
-    {
+    // 锁必须在任何 .await 之前释放（`AppState.store` 是 std::sync::Mutex）。
+    let saved = {
         let mut store = state.store.lock().unwrap_or_else(|e| e.into_inner());
+        let record = TunnelRecord {
+            id: unique_id(&store),
+            host: req.host.trim().to_string(),
+            bind: req.bind.trim().to_string(),
+            local_port: req.local_port as u16,
+            remote_host: req.remote_host.trim().to_string(),
+            remote_port: req.remote_port as u16,
+            pid,
+            created_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        };
         store.add(record.clone());
-        store.save()?;
-    }
+        match store.save() {
+            // 落盘失败就撤回刚加入的内存记录，交给下面的清理逻辑杀掉 ssh
+            Err(e) => {
+                store.remove(&record.id);
+                Err(e)
+            }
+            Ok(()) => Ok(record),
+        }
+    };
+    let record = match saved {
+        Ok(record) => record,
+        Err(e) => {
+            kill_unstarted(&mut child).await;
+            return Err(e);
+        }
+    };
 
     spawn_watcher(app, record.id.clone(), child, Arc::clone(&stderr_buf));
 
@@ -696,14 +746,7 @@ pub async fn restart_tunnel(
     );
     {
         let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
-        let duplicated = store.list().iter().any(|r| {
-            r.id != record.id
-                && r.bind == record.bind
-                && r.local_port == record.local_port
-                && r.pid > 0
-                && process::is_ssh_process(r.pid)
-        });
-        if duplicated {
+        if local_port_taken(&store, &record.id, &record.bind, record.local_port) {
             return Err(AppError::PortInUse(format!(
                 "本地端口 {}:{} 已被占用 — 已有另一条正在运行的转发使用它",
                 record.bind, record.local_port
@@ -711,7 +754,7 @@ pub async fn restart_tunnel(
         }
     }
 
-    let (child, stderr_buf) = spawn_ssh(
+    let (mut child, stderr_buf) = spawn_ssh(
         &spec,
         &record.host,
         password.as_deref(),
@@ -725,12 +768,24 @@ pub async fn restart_tunnel(
             reason: "无法获取 ssh 进程 PID".into(),
         })?;
 
-    {
+    // 落盘：失败时回退内存中的 PID，并把刚拉起的 ssh 交给下面的清理逻辑杀掉。
+    // 注意锁必须在任何 .await 之前释放（`AppState.store` 是 std::sync::Mutex）。
+    let save_result = {
         let mut store = state.store.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(r) = store.get_mut(id) {
             r.pid = pid;
         }
-        store.save()?;
+        let result = store.save();
+        if result.is_err() {
+            if let Some(r) = store.get_mut(id) {
+                r.pid = 0;
+            }
+        }
+        result
+    };
+    if let Err(e) = save_result {
+        kill_unstarted(&mut child).await;
+        return Err(e);
     }
 
     spawn_watcher(app, record.id.clone(), child, stderr_buf);
@@ -780,13 +835,7 @@ pub fn update_record(
         ));
     }
 
-    let conflict = store.list().iter().any(|r| {
-        r.id != record.id
-            && r.bind == req.bind
-            && r.local_port == req.local_port as u16
-            && r.pid > 0
-            && process::is_ssh_process(r.pid)
-    });
+    let conflict = local_port_taken(&store, &record.id, &req.bind, req.local_port as u16);
     if conflict {
         return Err(AppError::PortInUse(format!(
             "本地端口 {}:{} 已被占用 — 与另一条正在运行的转发冲突",

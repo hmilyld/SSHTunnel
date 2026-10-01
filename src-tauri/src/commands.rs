@@ -85,8 +85,50 @@ pub fn ssh_config_path() -> String {
     ssh_config::default_config_path().display().to_string()
 }
 
-/// 数据目录（tunnels.json / app.log 所在位置，用于界面提示）
+/// 数据目录（tunnels.json / app.log 所在目录，供界面做按钮提示）
 #[tauri::command]
-pub fn data_path() -> String {
-    crate::store::Store::file_path().display().to_string()
+pub fn data_dir() -> String {
+    crate::store::Store::data_dir().display().to_string()
+}
+
+/// 在系统文件管理器中打开数据目录（资源管理器 / 访达）。
+///
+/// 只打开**后端自己解析的**数据目录，不接受前端传入路径——
+/// 这样即使 WebView 侧被注入脚本，也无法借此打开任意路径。
+#[tauri::command]
+pub fn reveal_data_dir() -> Result<(), AppError> {
+    let dir = crate::store::Store::data_dir();
+    // 目录正常由 logging::init 在启动时创建；这里再兜一次，避免早期手动清理后点击无反应
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return Err(AppError::Process(format!(
+            "无法创建数据目录 {}：{e}",
+            dir.display()
+        )));
+    }
+
+    #[cfg(windows)]
+    let program = {
+        // explorer.exe 打开目录；CREATE_NO_WINDOW 避免闪一下控制台黑窗
+        "explorer"
+    };
+    #[cfg(target_os = "macos")]
+    let program = "open";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let program = "xdg-open";
+
+    let mut cmd = std::process::Command::new(program);
+
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
+
+    cmd.arg(&dir)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| AppError::Process(format!("无法打开数据目录 {}：{e}", dir.display())))
 }
