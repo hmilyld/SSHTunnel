@@ -159,8 +159,11 @@ export default function App() {
       void refresh(true);
     } catch (e) {
       if (isPasswordRequired(e)) {
-        // 密码错误：留在弹窗内提示，可直接重输
-        setPwdError(passwordRequiredMessage(e) || "密码错误，请重试");
+        // 密码错误（预检阶段被服务器拒绝）：留在弹窗内红字提示，可直接重输
+        const detail = passwordRequiredMessage(e);
+        setPwdError(
+          detail ? `密码错误或认证被拒绝：${detail}` : "密码错误，请重试",
+        );
       } else {
         toast.error(`启动失败：${e}`);
         setPwdReq(null);

@@ -210,6 +210,125 @@ fn askpass_exe_path() -> String {
     exe.to_string_lossy().into_owned()
 }
 
+/// Unix 侧 askpass 路径即当前可执行文件本身
+#[cfg(unix)]
+fn askpass_exe_path() -> String {
+    std::env::current_exe()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// 给 ssh 注入 askpass 相关环境（密码只进子进程环境，不落盘、不进日志）
+fn apply_askpass_env(cmd: &mut tokio::process::Command, password: &str) {
+    cmd.env("SSH_ASKPASS", askpass_exe_path());
+    cmd.env("SSH_ASKPASS_REQUIRE", "force");
+    cmd.env("STM_ASKPASS_PWD", password);
+}
+
+/// 密码认证预检用的参数：只做认证不建转发（`-T`），且只走密码类认证
+fn password_probe_args(host: &str) -> Vec<String> {
+    vec![
+        "-T".into(),
+        "-o".into(),
+        "NumberOfPasswordPrompts=1".into(),
+        "-o".into(),
+        "ConnectTimeout=10".into(),
+        "-o".into(),
+        "StrictHostKeyChecking=accept-new".into(),
+        "-o".into(),
+        "PreferredAuthentications=password,keyboard-interactive".into(),
+        host.into(),
+    ]
+}
+
+/// 密码认证预检：单独跑一次 `ssh -T`（不建立转发），确认密码正确后才真正启动隧道。
+///
+/// - 返回 `Err(PasswordRequired)`：服务器明确拒绝（密码错误）→ 前端在密码弹窗内红字提示
+/// - 返回 `Ok(())`：认证通过；或预检无法判定（连接类错误/超时）——
+///   交由后续真正的隧道启动给出真实错误，不阻塞用户
+async fn verify_password_auth(host: &str, password: &str) -> Result<(), AppError> {
+    let mut cmd = tokio::process::Command::new("ssh");
+    cmd.args(password_probe_args(host))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        // 预检进程归本函数管理：超时/提前返回都会被回收
+        .kill_on_drop(true);
+
+    #[cfg(windows)]
+    cmd.creation_flags(0x0800_0000);
+
+    apply_askpass_env(&mut cmd, password);
+
+    let mut child = cmd.spawn().map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            AppError::SshNotFound
+        } else {
+            AppError::StartFailed {
+                reason: format!("创建 ssh 预检进程失败：{e}"),
+            }
+        }
+    })?;
+
+    // 后台读取 stderr，进程退出后 join 拿到完整内容
+    let stderr_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    let reader = {
+        let buf = Arc::clone(&stderr_buf);
+        if let Some(mut pipe) = child.stderr.take() {
+            Some(tauri::async_runtime::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut chunk = [0u8; 4096];
+                let mut text = String::new();
+                loop {
+                    match pipe.read(&mut chunk).await {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => text.push_str(&String::from_utf8_lossy(&chunk[..n])),
+                    }
+                }
+                *buf.lock().unwrap_or_else(|e| e.into_inner()) = text;
+            }))
+        } else {
+            None
+        }
+    };
+
+    // 认证往返 + 服务器 PAM 处理通常 <1.5s；最多等 5s，超时则放弃判定（fail-open）
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                if let Some(reader) = reader {
+                    let _ = reader.await;
+                }
+                let detail = stderr_buf
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone();
+                if is_password_required(&detail) {
+                    tracing::warn!("密码预检未通过：{}", last_meaningful_line(&detail));
+                    return Err(AppError::PasswordRequired(last_meaningful_line(&detail)));
+                }
+                tracing::info!("密码预检结束（{status}，无密码拒绝）→ 继续启动隧道");
+                return Ok(());
+            }
+            Ok(None) => {
+                if std::time::Instant::now() >= deadline {
+                    tracing::warn!("密码预检超过 5s 未结束，放弃判定并继续启动隧道");
+                    let _ = child.start_kill();
+                    return Ok(());
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(e) => {
+                return Err(AppError::StartFailed {
+                    reason: format!("等待 ssh 预检失败：{e}"),
+                })
+            }
+        }
+    }
+}
+
 /// 拉起一个 `ssh -L` 进程并完成 800ms 检活。
 ///
 /// - `password = None`：追加 `-o BatchMode=yes`（禁止任何交互，认证失败快速返回，
@@ -223,6 +342,11 @@ async fn spawn_ssh(
     host: &str,
     password: Option<&str>,
 ) -> Result<(tokio::process::Child, Arc<Mutex<String>>), AppError> {
+    // ===== 密码模式：先预检认证，密码错误在此阶段直接返回（不会出现“成功后立刻失败”） =====
+    if let Some(pwd) = password {
+        verify_password_auth(host, pwd).await?;
+    }
+
     let mut args: Vec<String> = vec![
         "-N".into(),
         "-o".into(),
@@ -261,9 +385,7 @@ async fn spawn_ssh(
 
     // 密码模式：让 ssh 通过 askpass（本程序）取密码，密码只进子进程环境
     if let Some(pwd) = password {
-        cmd.env("SSH_ASKPASS", askpass_exe_path());
-        cmd.env("SSH_ASKPASS_REQUIRE", "force");
-        cmd.env("STM_ASKPASS_PWD", pwd);
+        apply_askpass_env(&mut cmd, pwd);
     }
 
     let mut child = cmd.spawn().map_err(|e| {
@@ -294,8 +416,13 @@ async fn spawn_ssh(
         });
     }
 
-    // ===== 启动后等待约 800ms 检查进程是否存活 =====
-    tokio::time::sleep(Duration::from_millis(800)).await;
+    // ===== 启动后等待稳定性窗口再判定（密码模式含 askpass 往返，窗口放宽到 2s） =====
+    let settle = if password.is_some() {
+        Duration::from_millis(2000)
+    } else {
+        Duration::from_millis(800)
+    };
+    tokio::time::sleep(settle).await;
     match child.try_wait() {
         Ok(Some(status)) => {
             let detail = stderr_buf
@@ -553,5 +680,18 @@ mod tests {
             last_meaningful_line(s),
             "Permission denied (publickey,password)."
         );
+    }
+
+    #[test]
+    fn password_probe_only_uses_password_auth() {
+        let args = password_probe_args("dev");
+        let joined = args.join(" ");
+        // 只做认证不建转发
+        assert!(joined.starts_with("-T "));
+        // 限定密码类认证，且只尝试一次（错误密码立即返回）
+        assert!(joined.contains("PreferredAuthentications=password,keyboard-interactive"));
+        assert!(joined.contains("NumberOfPasswordPrompts=1"));
+        // 主机名在最后
+        assert_eq!(args.last().map(String::as_str), Some("dev"));
     }
 }

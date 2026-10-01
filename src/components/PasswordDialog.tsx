@@ -87,7 +87,8 @@ export function PasswordDialog({ req, busy, error, onCancel, onSubmit }: Passwor
                 </p>
               )}
               <p className="text-xs text-muted-foreground">
-                密码仅在本次启动时通过 SSH_ASKPASS 交给 ssh 进程，不保存、不写日志。
+                确认后会<strong>先单独验证密码</strong>（密码错误将直接提示、不会建立转发），
+                验证通过才启动隧道；密码仅通过 SSH_ASKPASS 交给 ssh 进程，不保存、不写日志。
               </p>
             </div>
           </DialogDescription>
@@ -129,10 +130,10 @@ export function PasswordDialog({ req, busy, error, onCancel, onSubmit }: Passwor
             {busy ? (
               <>
                 <SpinnerIcon className="h-4 w-4 animate-spin" />
-                认证中…
+                验证并启动中…
               </>
             ) : (
-              "确认启动"
+              "验证并启动"
             )}
           </Button>
         </DialogFooter>

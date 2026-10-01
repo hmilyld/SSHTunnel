@@ -301,7 +301,7 @@ export function NewTunnelDialog({
             {submitting ? (
               <>
                 <SpinnerIcon className="h-4 w-4 animate-spin" />
-                启动中…（约 1 秒）
+                启动中…
               </>
             ) : (
               "启动转发"

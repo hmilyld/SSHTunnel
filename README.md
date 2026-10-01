@@ -190,17 +190,23 @@ node scripts/gen-icons.mjs
 1. **密钥认证**（推荐）：已配置密钥或 ssh-agent 时直接启动，无额外步骤。
    另外新增 `-o StrictHostKeyChecking=accept-new`，首次连接新主机不再因
    yes/no 询问在无终端环境下失败（已变更的主机密钥仍会硬失败）。
-2. **密码认证**：首次启动带 `-o BatchMode=yes` 快速探测（禁止交互、不会挂起）；
-   若 stderr 返回 `Permission denied (publickey,password)`（**方法列表里含
-   password** 才判定，仅允许公钥的服务器不会弹框），后端返回
-   `PASSWORD_REQUIRED::…`，前端弹出**密码输入框**，确认后带密码重新启动：
+2. **密码认证**：
+   - 首次启动带 `-o BatchMode=yes` 快速探测（禁止交互、不会挂起）；
+     若 stderr 返回 `Permission denied (publickey,password)`（**方法列表里含
+     password** 才判定，仅允许公钥的服务器不会弹框），后端返回
+     `PASSWORD_REQUIRED::…`，前端弹出**密码输入框**。
+   - **确认后先做认证预检**：单独执行一次 `ssh -T`（不建立转发，限定
+     `PreferredAuthentications=password,keyboard-interactive`、
+     `NumberOfPasswordPrompts=1`）验证密码——密码错误在预检阶段就红字提示，
+     **不会出现“提示成功后立刻失败”**；预检通过才建立真正的隧道
+     （密码模式的稳定性检活窗口也从 800ms 放宽到 2s 兜底）。
+   - 预检超时（>5s）或连接类错误时 fail-open，交由隧道启动给出真实错误。
    - 密码通过 `SSH_ASKPASS=<本程序> + SSH_ASKPASS_REQUIRE=force +
      STM_ASKPASS_PWD=<密码>` 注入 ssh 子进程环境；
      程序以辅助模式（带参数且检测到 `SSH_ASKPASS` 环境变量）被 ssh 拉起，
      仅向 stdout 输出密码后立即退出，不启动 GUI、不写日志。
    - 密码**只驻留内存与子进程环境，不写入 tunnels.json、不进日志**；
-     带密码时附加 `-o NumberOfPasswordPrompts=1`，密码错误会在弹窗内提示重输。
-   - Windows 下 askpass 路径优先取 8.3 短路径，兼容 `Program Files` 等带空格目录。
+     Windows 下 askpass 路径优先取 8.3 短路径，兼容 `Program Files` 等带空格目录。
    - 「启动已保存的转发」走同一条密码流程。
 3. 新建弹窗与命令预览中均可看到将执行的完整 `ssh -N -L …` 命令。
 
