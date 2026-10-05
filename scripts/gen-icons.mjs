@@ -8,6 +8,12 @@
  *
  * 图形：蓝→靛蓝渐变圆角方块 + 白色右向箭头（端口转发语义）。
  * 采用 4x4 超采样抗锯齿，按尺寸直接程序化绘制，无缩放失真。
+ *
+ * 平台差异（重要）：**.icns 按 Apple 的 macOS 图标栅格渲染**（圆角方块 824×824 居中放在
+ * 1024 画布上，四周 100px 透明边距，圆角半径 185.4）；Windows/Linux 的 PNG/ICO 仍按
+ * 满画布渲染。原因：macOS 26 (Tahoe) 会把不符合该栅格的图标缩小后套进灰色圆角底框
+ * （社区叫 "icon jail"，看起来就是一团灰白方块），而满画布的图标在 Dock 里也一向比
+ * 系统图标更大。详见 README「已知边界」。
  */
 import { deflateSync } from "node:zlib";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -67,6 +73,14 @@ function encodePng(size, rgba) {
 const C1 = [14, 165, 233]; // #0EA5E9 sky-500
 const C2 = [79, 70, 229]; // #4F46E5 indigo-600
 
+/**
+ * Apple HIG 的 macOS 图标栅格：1024 画布里放 824×824 的圆角方块并居中（四周 100px 边距），
+ * 圆角半径 185.4（= 22.5% × 824）。只有 .icns 用它。
+ */
+const MAC_GRID = { canvas: 1024, art: 824, radius: 185.4 };
+/** 非 macOS 目标：满画布圆角方块，圆角半径占边长 22% */
+const FULL_BLEED_RADIUS_RATIO = 0.22;
+
 function lerp(a, b, t) {
   return Math.round(a + (b - a) * t);
 }
@@ -97,11 +111,18 @@ function inArrow(u, v) {
   return shaft || head;
 }
 
-/** 4x4 超采样渲染一个尺寸的 RGBA 图 */
-function renderIcon(size) {
+/**
+ * 4x4 超采样渲染一个尺寸的 RGBA 图。
+ *
+ * macGrid=true 时圆角方块缩到画布的 824/1024 并居中，箭头与渐变都按方块内部归一化坐标绘制，
+ * 因此在方块里的相对大小、位置与非 macOS 版本完全一致（.icns 专用）。
+ */
+function renderIcon(size, { macGrid = false } = {}) {
   const rgba = Buffer.alloc(size * size * 4);
   const SS = 4;
-  const r = size * 0.22;
+  const art = macGrid ? (size * MAC_GRID.art) / MAC_GRID.canvas : size;
+  const offset = (size - art) / 2;
+  const r = (macGrid ? MAC_GRID.radius / MAC_GRID.art : FULL_BLEED_RADIUS_RATIO) * art;
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       let accA = 0,
@@ -110,11 +131,12 @@ function renderIcon(size) {
         accB = 0;
       for (let sy = 0; sy < SS; sy++) {
         for (let sx = 0; sx < SS; sx++) {
-          const px = x + (sx + 0.5) / SS;
-          const py = y + (sy + 0.5) / SS;
-          if (!inRoundedRect(px, py, size, r)) continue;
-          const t = (px / size + py / size) / 2;
-          const inside = inArrow(px / size, py / size);
+          // 方块内部坐标（非 macGrid 时 offset=0、art=size，与旧实现一致）
+          const px = x + (sx + 0.5) / SS - offset;
+          const py = y + (sy + 0.5) / SS - offset;
+          if (!inRoundedRect(px, py, art, r)) continue;
+          const t = (px / art + py / art) / 2;
+          const inside = inArrow(px / art, py / art);
           const cr = inside ? 255 : lerp(C1[0], C2[0], t);
           const cg = inside ? 255 : lerp(C1[1], C2[1], t);
           const cb = inside ? 255 : lerp(C1[2], C2[2], t);
@@ -187,6 +209,13 @@ const png = (size) => {
   return pngOf.get(size);
 };
 
+/** macOS 栅格版本（仅 .icns 使用）：方块缩到 824/1024，四周留透明边距 */
+const macPngOf = new Map();
+const macPng = (size) => {
+  if (!macPngOf.has(size)) macPngOf.set(size, encodePng(size, renderIcon(size, { macGrid: true })));
+  return macPngOf.get(size);
+};
+
 // 标准 PNG 图标
 writeFileSync(join(outDir, "32x32.png"), png(32));
 writeFileSync(join(outDir, "128x128.png"), png(128));
@@ -204,16 +233,16 @@ writeFileSync(
   ]),
 );
 
-// macOS ICNS（PNG 容器条目）
+// macOS ICNS（PNG 容器条目）：按 Apple 的 824-on-1024 图标栅格渲染
 writeFileSync(
   join(outDir, "icon.icns"),
   buildIcns([
-    { fourcc: "ic11", png: png(32) }, // 16@2x
-    { fourcc: "ic12", png: png(64) }, // 32@2x
-    { fourcc: "ic07", png: png(128) },
-    { fourcc: "ic08", png: png(256) },
-    { fourcc: "ic09", png: png(512) },
-    { fourcc: "ic10", png: png(1024) },
+    { fourcc: "ic11", png: macPng(32) }, // 16@2x
+    { fourcc: "ic12", png: macPng(64) }, // 32@2x
+    { fourcc: "ic07", png: macPng(128) },
+    { fourcc: "ic08", png: macPng(256) },
+    { fourcc: "ic09", png: macPng(512) },
+    { fourcc: "ic10", png: macPng(1024) },
   ]),
 );
 

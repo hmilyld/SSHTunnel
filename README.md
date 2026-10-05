@@ -26,7 +26,8 @@ SSHTunnel/
 ├── .github/workflows/
 │   └── release.yml              # 打 vX.Y.Z tag 时自动编译各平台安装包并发布 Release
 ├── scripts/
-│   ├── gen-icons.mjs            # 零依赖图标生成（PNG / ICO / ICNS）
+│   ├── gen-icons.mjs            # 零依赖图标生成（PNG / ICO / ICNS；.icns 用 macOS 824-on-1024 栅格）
+│   ├── verify-icons.mjs         # 图标校验：解码 PNG/ICNS/ICO，报告颜色与不透明区边距
 │   ├── screenshot.ps1           # 全屏截图（验证用）
 │   └── uiclick.ps1              # UI Automation 点击（验证用）
 ├── src/                         # ---- 前端（React）----
@@ -97,6 +98,7 @@ React UI ──invoke──▶ commands.rs ──▶ tunnel.rs ──▶ tokio::
 | 托盘 | 左键显示/隐藏主窗口；右键菜单「显示主窗口 / 退出应用（保留隧道）/ **退出应用（关闭隧道）**」；**关闭窗口只隐藏不退出**；默认退出不杀隧道，可选退出时一并关闭全部隧道 |
 | 标题栏（按平台） | **macOS/Linux 用系统原生标题栏**（`tauri.conf.json` → `decorations: true`，红绿灯由系统绘制）；**Windows 才是无边框窗口**（`tauri.windows.conf.json` 覆盖为 `decorations: false`）+ 自绘标题栏：左侧图标与标题（整条可拖拽、双击最大化），右侧 46px 方形 最小化/最大化/关闭 按钮（关闭悬停 Windows 红 `#E81123`），关闭按钮 = 隐藏到托盘。前端据此决定是否渲染 `TitleBar`（`src/lib/platform.ts`）——**不会出现两条标题栏** |
 | 无黑窗 | Windows 下以 `CREATE_NO_WINDOW` 创建 ssh / tasklist / taskkill 子进程 |
+| 应用图标（macOS 26） | `.icns` 按 Apple 的 **824-on-1024 图标栅格**渲染：圆角方块 824×824 居中放在 1024 画布上、四周 100px 透明边距、圆角半径 185.4（`scripts/gen-icons.mjs`）；Windows/Linux 的 PNG/ICO 仍满画布。macOS 26 (Tahoe) 会把不符合该栅格的图标缩小并套进灰色圆角底框（社区叫 "icon jail"，观感就是灰白方块），且满画布图标在 Dock 里一向比系统图标更大 |
 | 日志 | `tracing` 同时写 stdout 与 `<配置目录>/app.log`，`RUST_LOG` 可覆盖级别 |
 
 > 维护提醒：平台配置按 **JSON Merge Patch（RFC 7396）** 合并，**数组是整体替换、不会逐项合并**。
@@ -351,6 +353,7 @@ git tag v0.3.0 && git push origin v0.3.0
 | 关闭后保留记录 | `stop_tunnel` 不再删除记录（PID 清零→已停止）；新增 `restart_tunnel` 复用记录重新拉起；`remove_tunnel` 仅允许删除已停止记录 | `cargo check` / `pnpm build` 通过，交互由用户实测 |
 | 标题去重 | 自绘标题栏保留窗口标题；内容区去掉重复 logo+大标题，仅留说明文字与操作按钮 | 同上 |
 | 标题栏按平台拆分 | macOS 改用**系统原生标题栏**（红绿灯）：基础 `tauri.conf.json` → `decorations: true`；无边框 + 自绘标题栏只留给 Windows（`tauri.windows.conf.json` 覆盖为 `decorations: false`），前端由 `src/lib/platform.ts::usesNativeTitleBar()` 决定是否渲染 `TitleBar`，避免出现两条标题栏 | `cargo check` / `cargo test`（9 passed）/ `pnpm build` 通过；macOS 侧待真机确认（见第 9 节） |
+| macOS 图标改为 824-on-1024 栅格 | 用户反馈 macOS Dock 里图标是「黑白方块」：图标文件本身验证为正常彩色（发布包 `Resources/icon.icns` 与仓库哈希一致），根因是 macOS 26 (Tahoe) 对不符合 Apple 图标栅格的图标做「缩小 + 灰色底框」处理。改为 `.icns` 按 824×824（r=185.4）居中放进 1024 画布渲染，PNG/ICO 不变 | `node scripts/verify-icons.mjs`：ic10 = 1024px、不透明区 824×824、左边距 9.77%、彩色占比 90.6%（= 栅格精确命中）✅ |
 
 ## 8. 代码复查与清理（2026-09-30）
 
@@ -421,6 +424,12 @@ git tag v0.3.0 && git push origin v0.3.0
 - **标题栏按平台拆分**（macOS 用原生红绿灯、只有 Windows 自绘）只在本机验证了 Windows 侧
   （`cargo check` / `cargo test` / `pnpm build` 全绿 + 配置合并结果比对），
   macOS 上「原生标题栏且不渲染 `TitleBar`」需在 Mac 上跑一次 `pnpm tauri dev` 确认。
+- **macOS 26 (Tahoe) 图标**：本轮把 `.icns` 改成 Apple 的 824-on-1024 栅格（不再满画布），
+  以退出「缩小 + 灰色底框」的 icon jail；但**真正拿到 Liquid Glass 外观还需要 `.icon`
+  bundle 编译出的 `Assets.car`**——`actool` 只在 macOS + Xcode 26 上有，本机（Windows）无法
+  生成，也无法本地验证。Tauri 2.11+ 的 `bundle.icon` 已支持直接给 `.icon` / `Assets.car`
+  （tauri-apps/tauri#14671），需要时可在 Mac 上用 Icon Composer 做一版再挂进 `tauri.macos.conf.json`。
+  若栅格修正后 Dock 里仍是灰底方块，请拍一张 Dock 截图再决定是否走这条路。
 - 打包分发已在本机执行：`pnpm tauri build` 产出
   `SSH Tunnel Manager_0.2.0_x64_en-US.msi`（2.14 MB）与
   `SSH Tunnel Manager_0.2.0_x64-setup.exe`（1.53 MB）；

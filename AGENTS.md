@@ -10,7 +10,8 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
 - `src-tauri/src/` — `main.rs` (entry → `lib.rs::run()`), `ssh_config.rs` (config parser),
   `tunnel.rs` (lifecycle core), `store.rs` (JSON persistence), `process.rs` (cross-platform process),
   `commands.rs` (FFI layer), `tray.rs`, `logging.rs`, `error.rs` (user-facing errors).
-- `scripts/` — `gen-icons.mjs` (icon codegen), `uiclick.ps1` / `screenshot.ps1` (UIA verification helpers).
+- `scripts/` — `gen-icons.mjs` (icon codegen), `verify-icons.mjs` (icon colour/geometry audit),
+  `uiclick.ps1` / `screenshot.ps1` (UIA verification helpers).
 
 ## Commands (Windows PowerShell shells do NOT auto-load the user profile)
 
@@ -32,6 +33,13 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
   `tauri.windows.conf.json`** forces a tauri-codegen rebuild).
 - Icons: `node scripts/gen-icons.mjs` writes `src-tauri/icons/` — tauri-build hard-fails if
   `src-tauri/icons/icon.ico` is missing (must be under `src-tauri/`, not repo root).
+  The `.icns` is rendered on **Apple's 824-on-1024 grid** (824×824 squircle, r=185.4, centered,
+  100px transparent margin) while PNG/ICO stay full-bleed: macOS 26 (Tahoe) shrinks non-conforming
+  icons into a gray rounded frame ("icon jail"), and full-bleed art also reads oversized in the Dock.
+  Verify with `node scripts/verify-icons.mjs` (colour stats + opaque-region margin; `.icns` entries
+  must report 9.77%, PNG/ICO 0%). True Liquid Glass needs an `.icon` → `Assets.car` build
+  (Xcode 26 `actool`, macOS-only); Tauri ≥2.11 accepts a `.icon`/`Assets.car` in `bundle.icon`
+  (tauri-apps/tauri#14671).
 
 ## Gotchas that will bite you
 
