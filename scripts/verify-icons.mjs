@@ -1,7 +1,12 @@
 /**
- * 临时审计脚本（用完即删）：解码 icons/ 下所有图标，报告真实颜色内容。
- *   node scripts/_icon_audit.mjs
- * 零依赖：PNG 手动 inflate + 反滤波。
+ * 图标校验脚本（零依赖）：解码 icons/ 下所有图标，报告真实颜色与不透明区几何。
+ *   node scripts/verify-icons.mjs
+ *
+ * 断言性观察点：
+ * - `.icns` 各条目：不透明区应为 824-on-1024 栅格（左边距 ≈ 9.77%），且必须是彩色（macOS Dock 用）；
+ * - `tray-icon.png`：必须是**单色**（平均色差 0，只有黑 + alpha）且箭头镂空（macOS 菜单栏模板图）；
+ * - PNG/ICO：满画布（左边距 0%）的彩色图标（Windows/Linux）。
+ * 内嵌的 icns 条目 PNG 会导出到 `dist/icon-preview/` 供肉眼检查。
  */
 import { inflateSync } from "node:zlib";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -126,7 +131,7 @@ function report(name, buf) {
 }
 
 console.log("== 独立 PNG ==");
-for (const f of ["32x32.png", "128x128.png", "128x128@2x.png", "icon.png"]) {
+for (const f of ["32x32.png", "128x128.png", "128x128@2x.png", "icon.png", "tray-icon.png"]) {
   report(f, readFileSync(join(dir, f)));
 }
 

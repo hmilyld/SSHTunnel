@@ -40,6 +40,10 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
   must report 9.77%, PNG/ICO 0%). True Liquid Glass needs an `.icon` → `Assets.car` build
   (Xcode 26 `actool`, macOS-only); Tauri ≥2.11 accepts a `.icon`/`Assets.car` in `bundle.icon`
   (tauri-apps/tauri#14671).
+  `icons/tray-icon.png` is the **macOS menu-bar template image** (36×36, black + alpha, arrow
+  knocked out): the menu bar must never get the coloured app icon, so `tray.rs` embeds it with
+  `include_bytes!` and sets `icon_as_template(true)` on macOS while Windows keeps the coloured icon.
+  Because the tray icon lives in `icons/`, regenerating icons is the only way to change it.
 
 ## Gotchas that will bite you
 
@@ -69,8 +73,13 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
   (RFC 7396), so **arrays are replaced wholesale**: the `app.windows` object is duplicated in both
   files and window fields must be edited in both.
 - Frameless window (Windows): titlebar buttons need the permissions in
-  `src-tauri/capabilities/default.json` (minimize/toggle-maximize/hide/is-maximized/start-dragging).
+  `src-tauri/capabilities/default.json` (minimize/toggle-minimize/toggle-maximize/hide/is-maximized/start-dragging).
   Buttons silently doing nothing = missing permission.
+- **macOS menu-bar (tray) icons must be monochrome template images** (black + alpha, with the glyph
+  knocked out of the fill, rendered via `icon_as_template(true)`): Apple's menu bar expects black/white
+  glyphs that the system inverts for light/dark, so the coloured app icon must not go there. If the
+  tray icon looks like a featureless solid block, the fill was not knocked out (template rendering only
+  reads alpha).
 - Windows process logic shells out (`tasklist`/`taskkill`/PowerShell); parse structurally
   (pid columns), never localized text.
 - App data is outside the repo: `%APPDATA%\ssh-tunnel-manager\{tunnels.json,app.log}`.

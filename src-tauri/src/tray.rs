@@ -1,7 +1,8 @@
 //! 系统托盘：图标 + 菜单（显示主窗口 / 退出）+ 左键切换窗口。
 //!
-//! - Windows：任务栏通知区域；右键弹菜单，左键切换主窗口显隐
-//! - macOS：菜单栏；行为一致（托盘图标由 tauri.conf.json 的 bundle.icon 提供）
+//! - Windows：任务栏通知区域；右键弹菜单，左键切换主窗口显隐，图标用彩色应用图标
+//! - macOS：菜单栏；按 Apple 约定状态栏图标必须是**黑白模板图**（系统按 alpha 通道渲染：
+//!   浅色菜单栏画黑、深色画白），因此用单独生成的单色 `icons/tray-icon.png` 并置为 template
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -51,6 +52,30 @@ fn close_all_tunnels(app: &AppHandle) {
     tracing::info!("退出前关闭了 {closed} 条运行中的隧道（共 {} 条记录）", records.len());
 }
 
+/// macOS 菜单栏模板图（36×36 单色 PNG：黑 + alpha，箭头镂空），由 `scripts/gen-icons.mjs` 生成
+const TRAY_TEMPLATE_PNG: &[u8] = include_bytes!("../icons/tray-icon.png");
+
+/// 托盘图标：返回（图标, 是否按模板渲染）。
+///
+/// - macOS：单色模板图 + `template=true`，交给系统适配菜单栏深浅色（彩色图标不符合 Apple 约定）；
+/// - 其他平台：沿用彩色应用图标（Windows 通知区域支持彩色图标）。
+///
+/// 返回值的生命周期跟随 `app`（`default_window_icon` 借用自 AppHandle）：
+/// macOS 分支内嵌的 `'static` 字节可以协变地缩到该生命周期。
+fn tray_icon(app: &AppHandle) -> tauri::Result<(tauri::image::Image<'_>, bool)> {
+    // 这里用 cfg! 而不是 #[cfg]：两个分支在所有平台都参与编译，
+    // 于是 Windows 上的 cargo check 也能顺带类型检查 macOS 分支
+    if cfg!(target_os = "macos") {
+        Ok((tauri::image::Image::from_bytes(TRAY_TEMPLATE_PNG)?, true))
+    } else {
+        let icon = app
+            .default_window_icon()
+            .cloned()
+            .expect("tauri.conf.json 中未配置托盘图标");
+        Ok((icon, false))
+    }
+}
+
 /// 创建托盘图标与菜单
 pub fn init(app: &AppHandle) -> tauri::Result<()> {
     let show_item = MenuItem::with_id(app, "show", "显示主窗口", true, None::<&str>)?;
@@ -61,13 +86,11 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     let quit_stop = MenuItem::with_id(app, "quit_stop", "退出应用（关闭隧道）", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_item, &separator, &quit_keep, &quit_stop])?;
 
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .expect("tauri.conf.json 中未配置托盘图标");
+    let (icon, as_template) = tray_icon(app)?;
 
     TrayIconBuilder::with_id("main-tray")
         .icon(icon)
+        .icon_as_template(as_template)
         .tooltip("SSH 隧道管理器")
         .menu(&menu)
         // 左键交给 on_tray_icon_event 做窗口切换；菜单留给右键

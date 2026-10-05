@@ -26,7 +26,7 @@ SSHTunnel/
 ├── .github/workflows/
 │   └── release.yml              # 打 vX.Y.Z tag 时自动编译各平台安装包并发布 Release
 ├── scripts/
-│   ├── gen-icons.mjs            # 零依赖图标生成（PNG / ICO / ICNS；.icns 用 macOS 824-on-1024 栅格）
+│   ├── gen-icons.mjs            # 零依赖图标生成（PNG / ICO / ICNS；.icns 用 macOS 824-on-1024 栅格，另出单色托盘模板图）
 │   ├── verify-icons.mjs         # 图标校验：解码 PNG/ICNS/ICO，报告颜色与不透明区边距
 │   ├── screenshot.ps1           # 全屏截图（验证用）
 │   └── uiclick.ps1              # UI Automation 点击（验证用）
@@ -68,7 +68,7 @@ SSHTunnel/
         ├── store.rs             # tunnels.json 持久化（原子写 + 损坏备份，含测试）
         ├── process.rs           # 跨平台进程检测/终止（tasklist·taskkill / kill）
         ├── commands.rs          # Tauri 命令层（前端接口）
-        ├── tray.rs              # 系统托盘：菜单 + 左键切换窗口
+        ├── tray.rs              # 系统托盘：菜单 + 左键切换窗口（macOS 用单色模板图标）
         ├── logging.rs           # tracing：stdout + app.log 双写
         └── error.rs             # AppError（thiserror，序列化为中文文案）
 ```
@@ -96,6 +96,7 @@ React UI ──invoke──▶ commands.rs ──▶ tunnel.rs ──▶ tokio::
 | 关闭转发 | 先优雅（Windows `taskkill` / Unix `SIGTERM`）→ 最多等 1.8s → `taskkill /F` 或 `SIGKILL`；**保留记录**（PID 清零 → 「已停止」），配置长期保存可随时「启动」复用 |
 | 持久化 | `tunnels.json` 原子写（临时文件 + rename）；损坏时自动备份为 `.bak`；字段与需求文档一致（snake_case） |
 | 托盘 | 左键显示/隐藏主窗口；右键菜单「显示主窗口 / 退出应用（保留隧道）/ **退出应用（关闭隧道）**」；**关闭窗口只隐藏不退出**；默认退出不杀隧道，可选退出时一并关闭全部隧道 |
+| 托盘图标（按平台） | **macOS 菜单栏按 Apple 约定用单色模板图**：单独生成 `icons/tray-icon.png`（黑 + alpha，箭头镂空）并用 `icon_as_template(true)` 内嵌，系统自动在浅色菜单栏画黑、深色画白——**菜单栏不放彩色图标**；Windows 通知区域仍用彩色应用图标（`default_window_icon`） |
 | 标题栏（按平台） | **macOS/Linux 用系统原生标题栏**（`tauri.conf.json` → `decorations: true`，红绿灯由系统绘制）；**Windows 才是无边框窗口**（`tauri.windows.conf.json` 覆盖为 `decorations: false`）+ 自绘标题栏：左侧图标与标题（整条可拖拽、双击最大化），右侧 46px 方形 最小化/最大化/关闭 按钮（关闭悬停 Windows 红 `#E81123`），关闭按钮 = 隐藏到托盘。前端据此决定是否渲染 `TitleBar`（`src/lib/platform.ts`）——**不会出现两条标题栏** |
 | 无黑窗 | Windows 下以 `CREATE_NO_WINDOW` 创建 ssh / tasklist / taskkill 子进程 |
 | 应用图标（macOS 26） | `.icns` 按 Apple 的 **824-on-1024 图标栅格**渲染：圆角方块 824×824 居中放在 1024 画布上、四周 100px 透明边距、圆角半径 185.4（`scripts/gen-icons.mjs`）；Windows/Linux 的 PNG/ICO 仍满画布。macOS 26 (Tahoe) 会把不符合该栅格的图标缩小并套进灰色圆角底框（社区叫 "icon jail"，观感就是灰白方块），且满画布图标在 Dock 里一向比系统图标更大 |
@@ -354,6 +355,7 @@ git tag v0.3.0 && git push origin v0.3.0
 | 标题去重 | 自绘标题栏保留窗口标题；内容区去掉重复 logo+大标题，仅留说明文字与操作按钮 | 同上 |
 | 标题栏按平台拆分 | macOS 改用**系统原生标题栏**（红绿灯）：基础 `tauri.conf.json` → `decorations: true`；无边框 + 自绘标题栏只留给 Windows（`tauri.windows.conf.json` 覆盖为 `decorations: false`），前端由 `src/lib/platform.ts::usesNativeTitleBar()` 决定是否渲染 `TitleBar`，避免出现两条标题栏 | `cargo check` / `cargo test`（9 passed）/ `pnpm build` 通过；macOS 侧待真机确认（见第 9 节） |
 | macOS 图标改为 824-on-1024 栅格 | 用户反馈 macOS Dock 里图标是「黑白方块」：图标文件本身验证为正常彩色（发布包 `Resources/icon.icns` 与仓库哈希一致），根因是 macOS 26 (Tahoe) 对不符合 Apple 图标栅格的图标做「缩小 + 灰色底框」处理。改为 `.icns` 按 824×824（r=185.4）居中放进 1024 画布渲染，PNG/ICO 不变 | `node scripts/verify-icons.mjs`：ic10 = 1024px、不透明区 824×824、左边距 9.77%、彩色占比 90.6%（= 栅格精确命中）✅ |
+| macOS 菜单栏图标改为单色模板图 | 用户指正：macOS **菜单栏（状态栏）图标按 Apple 约定应为黑白**，不能直接用彩色应用图标。新增 `icons/tray-icon.png`（36×36 单色：黑 + alpha、箭头镂空），`tray.rs` 在 macOS 用它并置 `icon_as_template(true)`（浅色菜单栏黑 / 深色白，由系统渲染）；Windows 托盘仍用彩色应用图标 | `verify-icons.mjs`：tray-icon.png 平均色差 0.0、彩色占比 0.0%、RGB 全 0（单色）；alpha 扫描：不透明 1104 / 透明 148，36×36、水平中线为 `###.......##`（箭头处确实镂空）✅；`cargo check` / `cargo test`（9 passed）/ `pnpm build` 通过 |
 
 ## 8. 代码复查与清理（2026-09-30）
 

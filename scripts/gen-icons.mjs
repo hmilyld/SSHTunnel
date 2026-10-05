@@ -5,15 +5,19 @@
  * 生成 Tauri 打包与托盘所需的全部图标：
  *   icons/32x32.png  icons/128x128.png  icons/128x128@2x.png
  *   icons/icon.png(1024)  icons/icon.ico  icons/icon.icns
+ *   icons/tray-icon.png   （macOS 菜单栏单色模板图，见下）
  *
  * 图形：蓝→靛蓝渐变圆角方块 + 白色右向箭头（端口转发语义）。
  * 采用 4x4 超采样抗锯齿，按尺寸直接程序化绘制，无缩放失真。
  *
- * 平台差异（重要）：**.icns 按 Apple 的 macOS 图标栅格渲染**（圆角方块 824×824 居中放在
- * 1024 画布上，四周 100px 透明边距，圆角半径 185.4）；Windows/Linux 的 PNG/ICO 仍按
- * 满画布渲染。原因：macOS 26 (Tahoe) 会把不符合该栅格的图标缩小后套进灰色圆角底框
- * （社区叫 "icon jail"，看起来就是一团灰白方块），而满画布的图标在 Dock 里也一向比
- * 系统图标更大。详见 README「已知边界」。
+ * 平台差异（重要）：
+ * 1. **.icns 按 Apple 的 macOS 图标栅格渲染**（圆角方块 824×824 居中放在 1024 画布上，
+ *    四周 100px 透明边距，圆角半径 185.4）；Windows/Linux 的 PNG/ICO 仍按满画布渲染。
+ *    原因：macOS 26 (Tahoe) 会把不符合该栅格的图标缩小后套进灰色圆角底框（社区叫
+ *    "icon jail"），而满画布的图标在 Dock 里也一向比系统图标更大。
+ * 2. **tray-icon.png 是单色模板图**（黑 + alpha，箭头镂空）：macOS 菜单栏按 Apple 约定
+ *    只接受黑白模板图标（系统按 alpha 在浅色菜单栏画黑、深色画白），彩色应用图标不能
+ *    直接用在菜单栏上；Windows 通知区域仍用彩色应用图标。
  */
 import { deflateSync } from "node:zlib";
 import { mkdirSync, writeFileSync } from "node:fs";
@@ -157,6 +161,39 @@ function renderIcon(size, { macGrid = false } = {}) {
   return rgba;
 }
 
+/**
+ * macOS 菜单栏模板图（单色）：黑色圆角方块 + **镂空**箭头。
+ *
+ * 模板图只取 alpha 通道，系统在浅色菜单栏把它画成纯黑、深色菜单栏画成纯白，因此：
+ * - 不能用彩色图标（Apple 约定状态栏图标为黑白，彩色会显得突兀）；
+ * - 箭头必须镂空（alpha=0），否则整块都是不透明像素，渲染出来就是一个没有细节的实心方块。
+ */
+function renderTrayIcon(size) {
+  const rgba = Buffer.alloc(size * size * 4);
+  const SS = 4;
+  const r = size * FULL_BLEED_RADIUS_RATIO;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let accA = 0;
+      for (let sy = 0; sy < SS; sy++) {
+        for (let sx = 0; sx < SS; sx++) {
+          const px = x + (sx + 0.5) / SS;
+          const py = y + (sy + 0.5) / SS;
+          if (!inRoundedRect(px, py, size, r)) continue; // 圆角外透明
+          if (inArrow(px / size, py / size)) continue; // 箭头镂空
+          accA += 255;
+        }
+      }
+      const i = (y * size + x) * 4;
+      rgba[i] = 0; // 模板图颜色无意义，按惯例给纯黑
+      rgba[i + 1] = 0;
+      rgba[i + 2] = 0;
+      rgba[i + 3] = Math.round(accA / (SS * SS));
+    }
+  }
+  return rgba;
+}
+
 /* ---------------- ICO / ICNS 封装 ---------------- */
 
 function buildIco(entries /* [{ size, png }] */) {
@@ -221,6 +258,9 @@ writeFileSync(join(outDir, "32x32.png"), png(32));
 writeFileSync(join(outDir, "128x128.png"), png(128));
 writeFileSync(join(outDir, "128x128@2x.png"), png(256));
 writeFileSync(join(outDir, "icon.png"), png(1024));
+
+// macOS 菜单栏模板图（单色，36px = 菜单栏 18pt @2x），由 tray.rs 用 include_bytes! 内嵌
+writeFileSync(join(outDir, "tray-icon.png"), encodePng(36, renderTrayIcon(36)));
 
 // Windows ICO（PNG 压缩条目：16/32/48/256）
 writeFileSync(
