@@ -35,10 +35,11 @@ SSHTunnel/
 │   ├── styles/globals.css       # 设计令牌（深/浅主题 CSS 变量）+ 全局样式
 │   ├── lib/
 │   │   ├── api.ts               # tauri command 的类型化封装
+│   │   ├── platform.ts          # 是否 macOS（决定用原生标题栏还是自绘标题栏）
 │   │   └── utils.ts             # cn() 类名合并
 │   ├── hooks/useTheme.ts        # 深色/浅色主题（localStorage 持久化）
 │   └── components/
-│       ├── TitleBar.tsx         # 自绘标题栏（拖拽移动 / 双击最大化 / 最小化·最大化·关闭）
+│       ├── TitleBar.tsx         # 自绘标题栏（**仅 Windows**：拖拽移动 / 双击最大化 / 最小化·最大化·关闭）
 │       ├── AppHeader.tsx        # 内容区顶栏：说明文字 / 刷新 / 新建转发（标题不重复）
 │       ├── TunnelTable.tsx      # 隧道列表表格（含骨架屏、空状态）
 │       ├── NewTunnelDialog.tsx  # 新建转发弹窗（表单校验 + 命令预览）
@@ -53,6 +54,7 @@ SSHTunnel/
     ├── Cargo.toml               # Rust 依赖
     ├── build.rs                 # tauri-build（能力校验 + Windows 图标资源）
     ├── tauri.conf.json          # 窗口、托盘图标、dev/build 命令
+    ├── tauri.windows.conf.json  # Windows 覆盖：decorations:false（无边框 + 自绘标题栏）
     ├── capabilities/default.json# 权限能力（core:default）
     ├── icons/                   # 生成的应用图标（托盘与安装包使用）
     │   ├── 32x32.png  128x128.png  128x128@2x.png
@@ -93,9 +95,14 @@ React UI ──invoke──▶ commands.rs ──▶ tunnel.rs ──▶ tokio::
 | 关闭转发 | 先优雅（Windows `taskkill` / Unix `SIGTERM`）→ 最多等 1.8s → `taskkill /F` 或 `SIGKILL`；**保留记录**（PID 清零 → 「已停止」），配置长期保存可随时「启动」复用 |
 | 持久化 | `tunnels.json` 原子写（临时文件 + rename）；损坏时自动备份为 `.bak`；字段与需求文档一致（snake_case） |
 | 托盘 | 左键显示/隐藏主窗口；右键菜单「显示主窗口 / 退出应用（保留隧道）/ **退出应用（关闭隧道）**」；**关闭窗口只隐藏不退出**；默认退出不杀隧道，可选退出时一并关闭全部隧道 |
-| 无边框窗口 | `decorations: false` + 自绘标题栏：左侧图标与标题（整条可拖拽、双击最大化），右侧 46px 方形 最小化/最大化/关闭 按钮（关闭悬停 Windows 红 `#E81123`），关闭按钮 = 隐藏到托盘 |
+| 标题栏（按平台） | **macOS/Linux 用系统原生标题栏**（`tauri.conf.json` → `decorations: true`，红绿灯由系统绘制）；**Windows 才是无边框窗口**（`tauri.windows.conf.json` 覆盖为 `decorations: false`）+ 自绘标题栏：左侧图标与标题（整条可拖拽、双击最大化），右侧 46px 方形 最小化/最大化/关闭 按钮（关闭悬停 Windows 红 `#E81123`），关闭按钮 = 隐藏到托盘。前端据此决定是否渲染 `TitleBar`（`src/lib/platform.ts`）——**不会出现两条标题栏** |
 | 无黑窗 | Windows 下以 `CREATE_NO_WINDOW` 创建 ssh / tasklist / taskkill 子进程 |
 | 日志 | `tracing` 同时写 stdout 与 `<配置目录>/app.log`，`RUST_LOG` 可覆盖级别 |
+
+> 维护提醒：平台配置按 **JSON Merge Patch（RFC 7396）** 合并，**数组是整体替换、不会逐项合并**。
+> 所以 `tauri.windows.conf.json` 的 `app.windows` 必须完整复制 `tauri.conf.json` 里的窗口对象
+> （目前只有 `decorations` 不同）——改窗口尺寸/标题等字段时**两个文件都要改**，否则 Windows 上
+> 会静默用回平台文件里的旧值。
 
 ### Tauri 命令（前端接口）
 
@@ -270,7 +277,7 @@ git tag v0.3.0 && git push origin v0.3.0
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│ ▣ SSH 隧道管理器                              ─   □    ✕    │  自绘标题栏（可拖拽/双击最大化）
+│ ▣ SSH 隧道管理器                              ─   □    ✕    │  Windows 自绘标题栏（可拖拽/双击最大化）
 ├──────────────────────────────────────────────────────────────┤
 │ 管理到 Linux 服务器的 ssh -L 本地端口转发   [☾] [↻ 刷新]  [＋ 新建转发] │  顶栏
 ├──────────────────────────────────────────────────────────────┤
@@ -283,6 +290,8 @@ git tag v0.3.0 && git push origin v0.3.0
 └──────────────────────────────────────────────────────────────┘
 ```
 
+- 说明：上图是 **Windows** 的界面（无边框 + 自绘标题栏）；macOS 用系统原生标题栏，
+  窗口左上角是系统红绿灯，`TitleBar` 不渲染。
 - 深/浅主题：右上角月亮/太阳按钮切换，`<html class="dark">` + localStorage 持久化，
   首帧前由内联脚本应用，无闪白。
 - 右键：全局禁用界面右键菜单（`contextmenu` preventDefault，WebView2 默认菜单不再弹出）；
@@ -330,7 +339,7 @@ git tag v0.3.0 && git push origin v0.3.0
 | 调整项 | 结果 |
 | --- | --- |
 | 取消窗口置顶 | `WS_EX_TOPMOST` 已清除（`GetWindowLong` 实测 bit 0x8 = CLEARED）✅ |
-| 无边框 + 自绘标题栏 | `decorations: false`；标题栏可拖拽（模拟拖动 dx=120/dy=80 精确跟随）、双击最大化、最小化/最大化/还原按钮全部 E2E PASS（依赖 capabilities 新增的 window 权限）✅ |
+| 无边框 + 自绘标题栏（Windows） | `tauri.windows.conf.json` → `decorations: false`；标题栏可拖拽（模拟拖动 dx=120/dy=80 精确跟随）、双击最大化、最小化/最大化/还原按钮全部 E2E PASS（依赖 capabilities 新增的 window 权限）✅ |
 | 绑定地址新增 localhost | 下拉 4 项齐全：127.0.0.1 / **localhost（等价 127.0.0.1）** / 0.0.0.0 / ::1 ✅ |
 | 托盘菜单新增「退出应用（关闭隧道）」 | 菜单项真实点击执行：app.log 记录 `从托盘退出应用（关闭所有隧道）` → `退出前关闭了 N 条运行中的隧道` → 进程正常退出 ✅ |
 | 项目迁移 `D:\Codespace\SSHTunnel` | robocopy 迁移（67 文件 0 失败）→ 原地 `pnpm install/build + cargo build` 全绿 → 实机运行验证 → 旧目录已删除 ✅ |
@@ -341,6 +350,7 @@ git tag v0.3.0 && git push origin v0.3.0
 | --- | --- | --- |
 | 关闭后保留记录 | `stop_tunnel` 不再删除记录（PID 清零→已停止）；新增 `restart_tunnel` 复用记录重新拉起；`remove_tunnel` 仅允许删除已停止记录 | `cargo check` / `pnpm build` 通过，交互由用户实测 |
 | 标题去重 | 自绘标题栏保留窗口标题；内容区去掉重复 logo+大标题，仅留说明文字与操作按钮 | 同上 |
+| 标题栏按平台拆分 | macOS 改用**系统原生标题栏**（红绿灯）：基础 `tauri.conf.json` → `decorations: true`；无边框 + 自绘标题栏只留给 Windows（`tauri.windows.conf.json` 覆盖为 `decorations: false`），前端由 `src/lib/platform.ts::usesNativeTitleBar()` 决定是否渲染 `TitleBar`，避免出现两条标题栏 | `cargo check` / `cargo test`（9 passed）/ `pnpm build` 通过；macOS 侧待真机确认（见第 9 节） |
 
 ## 8. 代码复查与清理（2026-09-30）
 
@@ -408,6 +418,9 @@ git tag v0.3.0 && git push origin v0.3.0
   下拉解析正常），业务主机连通性由日常使用验证。
 - macOS 侧代码路径（`libc::kill`、`ps -o comm`、ICNS 图标）已按平台条件编译实现，
   需在 macOS 12+ 上执行 `pnpm tauri dev / build` 做最终回归。
+- **标题栏按平台拆分**（macOS 用原生红绿灯、只有 Windows 自绘）只在本机验证了 Windows 侧
+  （`cargo check` / `cargo test` / `pnpm build` 全绿 + 配置合并结果比对），
+  macOS 上「原生标题栏且不渲染 `TitleBar`」需在 Mac 上跑一次 `pnpm tauri dev` 确认。
 - 打包分发已在本机执行：`pnpm tauri build` 产出
   `SSH Tunnel Manager_0.2.0_x64_en-US.msi`（2.14 MB）与
   `SSH Tunnel Manager_0.2.0_x64-setup.exe`（1.53 MB）；

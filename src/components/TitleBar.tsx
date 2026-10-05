@@ -5,7 +5,10 @@ import { MaximizeIcon, MinusIcon, RestoreIcon, TerminalIcon, XIcon } from "@/com
 import { cn } from "@/lib/utils";
 
 /**
- * 自绘标题栏（`decorations: false` 无边框窗口）。
+ * 自绘标题栏（**仅 Windows**：`tauri.windows.conf.json` 关闭了 `decorations`）。
+ *
+ * macOS 用系统原生标题栏（红绿灯）、不需要这个组件，`App` 会按平台决定是否渲染它
+ * （见 `src/lib/platform.ts::usesNativeTitleBar`）。
  *
  * 布局参考常见的桌面应用（VS Code / Windows 11 风格）：
  * - 左侧：应用图标 + 窗口标题（整条区域可拖拽移动窗口，双击最大化/还原）

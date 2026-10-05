@@ -28,8 +28,8 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
     filter: `cargo test ... <name>`)
   - `pnpm build` (= `tsc -b` strict + vite production build)
 - Dev: `pnpm tauri dev`. Release installers: `pnpm tauri build` →
-  `src-tauri/target/release/bundle/{msi,nsis}/` (2–6 min; editing `tauri.conf.json` forces a
-  tauri-codegen rebuild).
+  `src-tauri/target/release/bundle/{msi,nsis}/` (2–6 min; editing `tauri.conf.json` **or
+  `tauri.windows.conf.json`** forces a tauri-codegen rebuild).
 - Icons: `node scripts/gen-icons.mjs` writes `src-tauri/icons/` — tauri-build hard-fails if
   `src-tauri/icons/icon.ico` is missing (must be under `src-tauri/`, not repo root).
 
@@ -54,7 +54,13 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
 - FFI is snake_case both directions (serde defaults, no `rename_all`): JS uses `local_port`;
   invoke args are `{ request, password, id }`.
 - `AppState.store` is a `std::sync::Mutex` — never hold the guard across an `.await`.
-- Frameless window (`decorations:false`): titlebar buttons need the permissions in
+- **Windowing is per-platform**: base `tauri.conf.json` keeps `decorations: true` so macOS/Linux
+  get the native titlebar (traffic lights); only `tauri.windows.conf.json` sets
+  `decorations: false`, and `TitleBar` renders only when `usesNativeTitleBar()` (`src/lib/platform.ts`)
+  is false — never render it on macOS (two titlebars). Platform configs merge with JSON Merge Patch
+  (RFC 7396), so **arrays are replaced wholesale**: the `app.windows` object is duplicated in both
+  files and window fields must be edited in both.
+- Frameless window (Windows): titlebar buttons need the permissions in
   `src-tauri/capabilities/default.json` (minimize/toggle-maximize/hide/is-maximized/start-dragging).
   Buttons silently doing nothing = missing permission.
 - Windows process logic shells out (`tasklist`/`taskkill`/PowerShell); parse structurally

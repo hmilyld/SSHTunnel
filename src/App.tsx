@@ -9,6 +9,7 @@ import { StatusBar } from "@/components/StatusBar";
 import { TitleBar } from "@/components/TitleBar";
 import { TunnelTable } from "@/components/TunnelTable";
 import { useTheme } from "@/hooks/useTheme";
+import { usesNativeTitleBar } from "@/lib/platform";
 import {
   api,
   isPasswordRequired,
@@ -19,6 +20,12 @@ import {
 
 /** 自动刷新间隔（毫秒） */
 const POLL_INTERVAL = 3000;
+
+/**
+ * macOS 用系统原生标题栏（红绿灯），只有 Windows 是无边框窗口，
+ * 需要自绘标题栏来拖动窗口与提供 最小化/最大化/关闭 按钮。
+ */
+const NATIVE_TITLE_BAR = usesNativeTitleBar();
 
 export default function App() {
   const { theme } = useTheme();
@@ -214,8 +221,9 @@ export default function App() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      {/* 无边框窗口的自绘标题栏：拖拽移动 / 双击最大化 / 右侧三个控制按钮 */}
-      <TitleBar />
+      {/* Windows 无边框窗口的自绘标题栏：拖拽移动 / 双击最大化 / 右侧三个控制按钮；
+          macOS 保留原生标题栏，这里不渲染，避免出现两条标题栏 */}
+      {!NATIVE_TITLE_BAR && <TitleBar />}
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
         <AppHeader
@@ -257,7 +265,7 @@ export default function App() {
         onSubmit={submitPassword}
       />
 
-      {/* offset：避开顶部自绘标题栏 */}
+      {/* offset：避开顶部标题栏（Windows 自绘 / macOS 原生） */}
       <Toaster
         theme={theme}
         position="top-right"
