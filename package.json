@@ -1,7 +1,7 @@
 {
   "name": "ssh-tunnel-manager",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "跨平台 SSH 本地端口转发（ssh -L）管理器",
   "author": "hmilyld <https://hmilyld.com>",
