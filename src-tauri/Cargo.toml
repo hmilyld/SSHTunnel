@@ -28,7 +28,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tauri-plugin-single-instance = "2"
 glob = "0.3"
-jiff = "0.2"
+jiff = "1.0"
 
 # Unix（macOS）侧：libc::kill 用于进程存活检测与信号发送
 [target.'cfg(unix)'.dependencies]
