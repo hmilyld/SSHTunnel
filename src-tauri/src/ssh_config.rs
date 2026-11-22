@@ -20,6 +20,9 @@ pub struct SshHost {
     pub user: Option<String>,
     pub port: Option<u16>,
     pub identity_file: Option<String>,
+    /// HostName 是否已被首个 Host 块显式设置（OpenSSH 首个值生效，后续块不再覆盖）
+    #[serde(skip)]
+    hostname_set: bool,
 }
 
 /// 默认配置路径：Windows `C:\Users\<用户>\.ssh\config`，macOS `/Users/<用户>/.ssh/config`
@@ -92,8 +95,11 @@ pub fn parse(content: &str) -> Vec<SshHost> {
                     if token.is_empty() || is_wildcard(&token) {
                         continue;
                     }
-                    match hosts.iter().position(|h| h.alias.eq_ignore_ascii_case(&token)) {
-                        // 同一个别名后出现的 Host 行：OpenSSH 取第一个定义，后续仅补充空缺字段
+                    match hosts
+                        .iter()
+                        .position(|h| h.alias.eq_ignore_ascii_case(&token))
+                    {
+                        // 同一个别名后出现的 Host 行：每个参数的首个值生效，后续块只补充尚未设置的字段
                         Some(idx) => group.push(idx),
                         None => {
                             hosts.push(SshHost {
@@ -102,6 +108,7 @@ pub fn parse(content: &str) -> Vec<SshHost> {
                                 user: None,
                                 port: None,
                                 identity_file: None,
+                                hostname_set: false,
                             });
                             group.push(hosts.len() - 1);
                         }
@@ -118,7 +125,11 @@ pub fn parse(content: &str) -> Vec<SshHost> {
                 let v = unquote(rest);
                 if !v.is_empty() {
                     for &i in &group {
-                        hosts[i].hostname = v.clone();
+                        // OpenSSH：每个参数的首个值生效；后续重复 Host 块不再覆盖
+                        if !hosts[i].hostname_set {
+                            hosts[i].hostname = v.clone();
+                            hosts[i].hostname_set = true;
+                        }
                     }
                 }
             }
@@ -126,7 +137,9 @@ pub fn parse(content: &str) -> Vec<SshHost> {
                 let v = unquote(rest);
                 if !v.is_empty() {
                     for &i in &group {
-                        hosts[i].user = Some(v.clone());
+                        if hosts[i].user.is_none() {
+                            hosts[i].user = Some(v.clone());
+                        }
                     }
                 }
             }
@@ -134,7 +147,9 @@ pub fn parse(content: &str) -> Vec<SshHost> {
                 if let Ok(p) = rest.trim().parse::<u16>() {
                     if p > 0 {
                         for &i in &group {
-                            hosts[i].port = Some(p);
+                            if hosts[i].port.is_none() {
+                                hosts[i].port = Some(p);
+                            }
                         }
                     }
                 }
@@ -143,7 +158,9 @@ pub fn parse(content: &str) -> Vec<SshHost> {
                 let v = unquote(rest);
                 if !v.is_empty() {
                     for &i in &group {
-                        hosts[i].identity_file = Some(v.clone());
+                        if hosts[i].identity_file.is_none() {
+                            hosts[i].identity_file = Some(v.clone());
+                        }
                     }
                 }
             }
@@ -208,5 +225,28 @@ Match host badhost
     fn strips_inline_comments() {
         let hosts = parse("Host a # 注释\n  HostName a.example.com # 也是注释\n");
         assert_eq!(hosts[0].hostname, "a.example.com");
+    }
+
+    #[test]
+    fn duplicate_host_uses_first_value_per_directive() {
+        let cfg = r#"
+Host dev
+    HostName first.example.com
+    User alice
+    Port 22
+
+Host dev
+    HostName second.example.com
+    User bob
+    Port 2222
+    IdentityFile ~/.ssh/second
+"#;
+        let hosts = parse(cfg);
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].hostname, "first.example.com");
+        assert_eq!(hosts[0].user.as_deref(), Some("alice"));
+        assert_eq!(hosts[0].port, Some(22));
+        // 首个块没设置 IdentityFile，后续块可以补充
+        assert_eq!(hosts[0].identity_file.as_deref(), Some("~/.ssh/second"));
     }
 }

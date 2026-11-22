@@ -42,13 +42,17 @@ impl AppState {
     /// `alive` 使用 `is_ssh_process`：进程已退出、PID 为 0（已关闭）、或 PID 被其他
     /// 程序复用，都显示“已停止”。
     pub fn list_views(&self) -> Vec<TunnelView> {
-        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-        store
-            .list()
-            .iter()
+        // 先快照记录并释放锁，再查进程：is_ssh_process 在 Windows 上会启动 tasklist，
+        // 不能持锁执行，否则 3s 轮询会阻塞其他命令。
+        let records = {
+            let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+            store.list().to_vec()
+        };
+        records
+            .into_iter()
             .map(|record| TunnelView {
-                record: record.clone(),
                 alive: record.pid > 0 && process::is_ssh_process(record.pid),
+                record,
             })
             .collect()
     }
@@ -67,17 +71,40 @@ pub struct StartRequest {
     pub remote_port: u32,
 }
 
+/// 校验会进入 ssh argv 的目标字段，防止 `-oProxyCommand=...` 之类的参数注入。
+///
+/// 合法值保持原行为；只拒绝以 `-` 开头、含空白或控制字符的输入。
+fn validate_token(value: &str, label: &str) -> Result<(), AppError> {
+    let v = value.trim();
+    if v.starts_with('-') {
+        return Err(AppError::Validation(format!("{label}不能以 - 开头")));
+    }
+    if v.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(AppError::Validation(format!(
+            "{label}不能包含空白或控制字符"
+        )));
+    }
+    Ok(())
+}
+
 impl StartRequest {
     fn validate(&self) -> Result<(), AppError> {
         if self.host.trim().is_empty() {
             return Err(AppError::Validation("请选择 SSH Host".into()));
         }
+        validate_token(&self.host, "SSH Host")?;
         if self.remote_host.trim().is_empty() {
-            return Err(AppError::Validation("远程主机不能为空（默认 localhost）".into()));
+            return Err(AppError::Validation(
+                "远程主机不能为空（默认 localhost）".into(),
+            ));
         }
+        validate_token(&self.remote_host, "远程主机")?;
         if self.bind.trim().is_empty() {
-            return Err(AppError::Validation("本地绑定地址不能为空（默认 127.0.0.1）".into()));
+            return Err(AppError::Validation(
+                "本地绑定地址不能为空（默认 127.0.0.1）".into(),
+            ));
         }
+        validate_token(&self.bind, "本地绑定地址")?;
         if !(1..=65535).contains(&self.local_port) {
             return Err(AppError::Validation(format!(
                 "本地端口 {} 无效，应在 1-65535 之间",
@@ -149,11 +176,14 @@ fn explain_failure(status: std::process::ExitStatus, stderr: &str) -> String {
 
     let hint = {
         let lower = stderr.to_lowercase();
-        if lower.contains("address already in use") || lower.contains("only one usage of each socket") {
+        if lower.contains("address already in use")
+            || lower.contains("only one usage of each socket")
+        {
             "本地端口已被占用"
         } else if lower.contains("permission denied") {
             "认证失败，请确认已配置密钥登录或 ssh-agent"
-        } else if lower.contains("could not resolve hostname") || lower.contains("name or service not known")
+        } else if lower.contains("could not resolve hostname")
+            || lower.contains("name or service not known")
         {
             "无法解析主机名，请检查 ~/.ssh/config"
         } else if lower.contains("connection refused") {
@@ -203,8 +233,17 @@ fn unique_id(store: &Store) -> String {
 ///
 /// “运行中”= PID 非 0 且当前确实是 ssh 进程，与 [`AppState::list_views`] 的判定一致。
 fn local_port_taken(store: &Store, exclude_id: &str, bind: &str, port: u16) -> bool {
-    store.list().iter().any(|r| {
-        r.id != exclude_id && r.bind == bind && r.local_port == port && r.pid > 0 && process::is_ssh_process(r.pid)
+    local_port_taken_in(store.list(), exclude_id, bind, port)
+}
+
+/// [`local_port_taken`] 的快照版本：调用方先在锁内克隆记录、释放锁，再做进程查询。
+fn local_port_taken_in(records: &[TunnelRecord], exclude_id: &str, bind: &str, port: u16) -> bool {
+    records.iter().any(|r| {
+        r.id != exclude_id
+            && r.bind == bind
+            && r.local_port == port
+            && r.pid > 0
+            && process::is_ssh_process(r.pid)
     })
 }
 
@@ -315,8 +354,8 @@ async fn verify_password_auth(host: &str, password: &str) -> Result<(), AppError
     let stderr_buf: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let reader = {
         let buf = Arc::clone(&stderr_buf);
-        if let Some(mut pipe) = child.stderr.take() {
-            Some(tauri::async_runtime::spawn(async move {
+        child.stderr.take().map(|mut pipe| {
+            tauri::async_runtime::spawn(async move {
                 use tokio::io::AsyncReadExt;
                 let mut chunk = [0u8; 4096];
                 let mut text = String::new();
@@ -327,10 +366,8 @@ async fn verify_password_auth(host: &str, password: &str) -> Result<(), AppError
                     }
                 }
                 *buf.lock().unwrap_or_else(|e| e.into_inner()) = text;
-            }))
-        } else {
-            None
-        }
+            })
+        })
     };
 
     // 认证往返 + 服务器 PAM 处理通常 <1.5s；最多等 5s，超时则放弃判定（fail-open）
@@ -341,10 +378,7 @@ async fn verify_password_auth(host: &str, password: &str) -> Result<(), AppError
                 if let Some(reader) = reader {
                     let _ = reader.await;
                 }
-                let detail = stderr_buf
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone();
+                let detail = stderr_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
                 if is_password_required(&detail) {
                     tracing::warn!("密码预检未通过：{}", last_meaningful_line(&detail));
                     return Err(AppError::PasswordRequired(last_meaningful_line(&detail)));
@@ -424,6 +458,21 @@ async fn is_listening(bind: &str, port: u16) -> bool {
         }
     }
     false
+}
+
+/// 把 ssh 的退出状态与 stderr 归纳为前端错误（启动成功判定路径共用）。
+fn ssh_exit_error(status: std::process::ExitStatus, stderr_buf: &Arc<Mutex<String>>) -> AppError {
+    let detail = stderr_buf.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    tracing::warn!("ssh 启动后退出：{status}；stderr: {detail}");
+    // 服务器接受密码认证 → 交给前端弹密码框
+    //（已提供密码仍失败 = 密码错误，同样走此路径让用户重新输入）
+    if is_password_required(&detail) {
+        AppError::PasswordRequired(last_meaningful_line(&detail))
+    } else {
+        AppError::StartFailed {
+            reason: explain_failure(status, &detail),
+        }
+    }
 }
 
 /// 拉起一个 `ssh -L` 进程并判定其真正就绪。
@@ -543,44 +592,44 @@ async fn spawn_ssh(
     //    （ssh 自身 ConnectTimeout=15 会先退出给出真实原因，这里兜底“卡认证/黑洞”）
     let deadline = std::time::Instant::now() + Duration::from_secs(18);
     loop {
-        if is_listening(bind, local_port).await {
-            tracing::info!("本地端口 {bind}:{local_port} 已监听 → 隧道就绪");
-            return Ok((child, stderr_buf));
-        }
+        // 先看子进程是否已退出：端口可能被其他进程抢占，不能把“别人的监听”当成功。
         match child.try_wait() {
-            Ok(Some(status)) => {
-                let detail = stderr_buf
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone();
-                tracing::warn!("ssh 启动后退出：{status}；stderr: {detail}");
-                // 分类一：服务器接受密码认证 → 交给前端弹密码框
-                //（已提供密码仍失败 = 密码错误，同样走此路径让用户重新输入）
-                if is_password_required(&detail) {
-                    return Err(AppError::PasswordRequired(last_meaningful_line(&detail)));
-                }
-                return Err(AppError::StartFailed {
-                    reason: explain_failure(status, &detail),
-                });
-            }
-            Ok(None) => {
-                if std::time::Instant::now() >= deadline {
-                    // 超时兜底：杀掉并回收，绝不把 ssh 进程留在后台
-                    kill_unstarted(&mut child).await;
-                    return Err(AppError::StartFailed {
-                        reason: format!(
-                            "建立隧道超时：18 秒内 {bind}:{local_port} 未进入监听（服务器连接/认证过慢，或本地端口被防火墙拦截）"
-                        ),
-                    });
-                }
-                tokio::time::sleep(Duration::from_millis(150)).await;
-            }
+            Ok(Some(status)) => return Err(ssh_exit_error(status, &stderr_buf)),
+            Ok(None) => {}
             Err(e) => {
                 return Err(AppError::StartFailed {
                     reason: format!("等待 ssh 进程失败：{e}"),
                 })
             }
         }
+
+        if is_listening(bind, local_port).await {
+            // 监听出现后再确认 ssh 仍存活；100ms 足以过滤“端口被抢占、ssh 随即退出”的假成功。
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            match child.try_wait() {
+                Ok(None) => {
+                    tracing::info!("本地端口 {bind}:{local_port} 已监听 → 隧道就绪");
+                    return Ok((child, stderr_buf));
+                }
+                Ok(Some(status)) => return Err(ssh_exit_error(status, &stderr_buf)),
+                Err(e) => {
+                    return Err(AppError::StartFailed {
+                        reason: format!("等待 ssh 进程失败：{e}"),
+                    })
+                }
+            }
+        }
+
+        if std::time::Instant::now() >= deadline {
+            // 超时兜底：杀掉并回收，绝不把 ssh 进程留在后台
+            kill_unstarted(&mut child).await;
+            return Err(AppError::StartFailed {
+                reason: format!(
+                    "建立隧道超时：18 秒内 {bind}:{local_port} 未进入监听（服务器连接/认证过慢，或本地端口被防火墙拦截）"
+                ),
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
     }
 }
 
@@ -597,10 +646,7 @@ fn spawn_watcher(
             Ok(status) => tracing::info!("隧道 {id} 的 ssh 进程退出：{status}"),
             Err(e) => tracing::warn!("隧道 {id} 等待 ssh 退出失败：{e}"),
         }
-        let stderr = stderr
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone();
+        let stderr = stderr.lock().unwrap_or_else(|e| e.into_inner()).clone();
         let _ = app.emit("tunnel-exited", TunnelExited { id, stderr });
     });
 }
@@ -618,25 +664,30 @@ pub async fn start_tunnel(
     req.validate()?;
     let spec = req.spec();
 
-    // 预检：同一 bind:local_port 已有运行中的转发，提前给出友好错误
-    {
+    // 预检：同一 bind:local_port 已有运行中的转发，提前给出友好错误。
+    // 先克隆记录再释放锁，进程查询不会阻塞其他命令。
+    let records = {
         let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
-        if local_port_taken(&store, "", &req.bind, req.local_port as u16) {
-            return Err(AppError::PortInUse(format!(
-                "本地端口 {}:{} 已被占用 — 已有正在运行的相同转发",
-                req.bind, req.local_port
-            )));
-        }
+        store.list().to_vec()
+    };
+    if local_port_taken_in(&records, "", &req.bind, req.local_port as u16) {
+        return Err(AppError::PortInUse(format!(
+            "本地端口 {}:{} 已被占用 — 已有正在运行的相同转发",
+            req.bind, req.local_port
+        )));
     }
 
-    let (mut child, stderr_buf) =
-        spawn_ssh(&spec, req.host.trim(), password.as_deref(), &req.bind, req.local_port as u16)
-            .await?;
-    let pid = child
-        .id()
-        .ok_or_else(|| AppError::StartFailed {
-            reason: "无法获取 ssh 进程 PID".into(),
-        })?;
+    let (mut child, stderr_buf) = spawn_ssh(
+        &spec,
+        req.host.trim(),
+        password.as_deref(),
+        &req.bind,
+        req.local_port as u16,
+    )
+    .await?;
+    let pid = child.id().ok_or_else(|| AppError::StartFailed {
+        reason: "无法获取 ssh 进程 PID".into(),
+    })?;
 
     // ===== 持久化（关闭后也不会丢失，除非用户显式删除） =====
     // 锁必须在任何 .await 之前释放（`AppState.store` 是 std::sync::Mutex）。
@@ -704,10 +755,11 @@ pub async fn stop_tunnel(state: &AppState, id: &str) -> Result<Vec<TunnelView>, 
 
     let views = {
         let mut store = state.store.lock().unwrap_or_else(|e| e.into_inner());
+        let backup = store.list().to_vec();
         if let Some(r) = store.get_mut(id) {
             r.pid = 0; // 记录保留，PID 清零表示“无运行进程”
         }
-        store.save()?;
+        store.save_or_restore(backup)?;
         drop(store);
         state.list_views()
     };
@@ -723,13 +775,19 @@ pub async fn restart_tunnel(
     id: &str,
     password: Option<String>,
 ) -> Result<Vec<TunnelView>, AppError> {
-    let record = {
+    let (record, records) = {
         let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
-        store
+        let record = store
             .get(id)
             .cloned()
-            .ok_or_else(|| AppError::NotFound(id.to_string()))?
+            .ok_or_else(|| AppError::NotFound(id.to_string()))?;
+        (record, store.list().to_vec())
     };
+
+    // 已保存记录同样可能来自旧版本/手工编辑，启动前再校验一次
+    validate_token(&record.host, "SSH Host")?;
+    validate_token(&record.bind, "本地绑定地址")?;
+    validate_token(&record.remote_host, "远程主机")?;
 
     // 已在运行则拒绝重复启动
     if record.pid > 0 && process::is_ssh_process(record.pid) {
@@ -744,14 +802,11 @@ pub async fn restart_tunnel(
         "{}:{}:{}:{}",
         record.bind, record.local_port, record.remote_host, record.remote_port
     );
-    {
-        let store = state.store.lock().unwrap_or_else(|e| e.into_inner());
-        if local_port_taken(&store, &record.id, &record.bind, record.local_port) {
-            return Err(AppError::PortInUse(format!(
-                "本地端口 {}:{} 已被占用 — 已有另一条正在运行的转发使用它",
-                record.bind, record.local_port
-            )));
-        }
+    if local_port_taken_in(&records, &record.id, &record.bind, record.local_port) {
+        return Err(AppError::PortInUse(format!(
+            "本地端口 {}:{} 已被占用 — 已有另一条正在运行的转发使用它",
+            record.bind, record.local_port
+        )));
     }
 
     let (mut child, stderr_buf) = spawn_ssh(
@@ -762,11 +817,9 @@ pub async fn restart_tunnel(
         record.local_port,
     )
     .await?;
-    let pid = child
-        .id()
-        .ok_or_else(|| AppError::StartFailed {
-            reason: "无法获取 ssh 进程 PID".into(),
-        })?;
+    let pid = child.id().ok_or_else(|| AppError::StartFailed {
+        reason: "无法获取 ssh 进程 PID".into(),
+    })?;
 
     // 落盘：失败时回退内存中的 PID，并把刚拉起的 ssh 交给下面的清理逻辑杀掉。
     // 注意锁必须在任何 .await 之前释放（`AppState.store` 是 std::sync::Mutex）。
@@ -806,8 +859,11 @@ pub fn remove_record(state: &AppState, id: &str) -> Result<Vec<TunnelView>, AppE
             "该隧道仍在运行，请先关闭再删除记录".into(),
         ));
     }
-    store.remove(id);
-    store.save()?;
+    let backup = store.list().to_vec();
+    if store.remove(id).is_none() {
+        return Err(AppError::NotFound(id.to_string()));
+    }
+    store.save_or_restore(backup)?;
     drop(store);
     Ok(state.list_views())
 }
@@ -843,15 +899,17 @@ pub fn update_record(
         )));
     }
 
-    if let Some(r) = store.get_mut(id) {
-        r.host = req.host.trim().to_string();
-        r.bind = req.bind.trim().to_string();
-        r.local_port = req.local_port as u16;
-        r.remote_host = req.remote_host.trim().to_string();
-        r.remote_port = req.remote_port as u16;
-        r.pid = 0; // 保持「已停止」状态
-    }
-    store.save()?;
+    let backup = store.list().to_vec();
+    let Some(r) = store.get_mut(id) else {
+        return Err(AppError::NotFound(id.to_string()));
+    };
+    r.host = req.host.trim().to_string();
+    r.bind = req.bind.trim().to_string();
+    r.local_port = req.local_port as u16;
+    r.remote_host = req.remote_host.trim().to_string();
+    r.remote_port = req.remote_port as u16;
+    r.pid = 0; // 保持「已停止」状态
+    store.save_or_restore(backup)?;
     drop(store);
 
     tracing::info!(
@@ -874,7 +932,9 @@ mod tests {
             "root@host's password: \nPermission denied (publickey,password)."
         ));
         // 大小写不敏感
-        assert!(is_password_required("Permission Denied (Publickey,Password)."));
+        assert!(is_password_required(
+            "Permission Denied (Publickey,Password)."
+        ));
         // 只允许公钥 → 不弹密码框（弹了也没用）
         assert!(!is_password_required("Permission denied (publickey)."));
         // 网络类错误与密码无关
@@ -925,5 +985,133 @@ mod tests {
         assert_eq!(probe_addrs("localhost"), Some(vec![v4, v6]));
         // 主机名 → 交给 DNS（返回 None）
         assert_eq!(probe_addrs("my-server.lan"), None);
+    }
+
+    fn valid_request() -> StartRequest {
+        StartRequest {
+            host: "dev".into(),
+            bind: "127.0.0.1".into(),
+            local_port: 4096,
+            remote_host: "localhost".into(),
+            remote_port: 4096,
+        }
+    }
+
+    #[test]
+    fn validate_rejects_blank_fields() {
+        let mut req = valid_request();
+        req.host = "   ".into();
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("请选择 SSH Host"));
+
+        let mut req = valid_request();
+        req.remote_host = String::new();
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("远程主机不能为空"));
+
+        let mut req = valid_request();
+        req.bind = String::new();
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("本地绑定地址不能为空"));
+    }
+
+    #[test]
+    fn validate_checks_port_ranges() {
+        let mut req = valid_request();
+        req.local_port = 0;
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("本地端口 0 无效"));
+
+        let mut req = valid_request();
+        req.local_port = 65536;
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("本地端口 65536 无效"));
+
+        let mut req = valid_request();
+        req.remote_port = 0;
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("远程端口 0 无效"));
+
+        let mut req = valid_request();
+        req.remote_port = 65536;
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("远程端口 65536 无效"));
+    }
+
+    #[test]
+    fn validate_accepts_boundary_ports() {
+        let mut req = valid_request();
+        req.local_port = 1;
+        req.remote_port = 65535;
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_ssh_option_injection_and_control_chars() {
+        let mut req = valid_request();
+        req.host = "-oProxyCommand=calc".into();
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("不能以 - 开头"));
+
+        let mut req = valid_request();
+        req.host = "dev host".into();
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("不能包含空白或控制字符"));
+
+        let mut req = valid_request();
+        req.remote_host = "local\nhost".into();
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("不能包含空白或控制字符"));
+
+        let mut req = valid_request();
+        req.bind = "-v".into();
+        assert!(req
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("不能以 - 开头"));
+
+        let mut req = valid_request();
+        req.bind = "::1".into();
+        assert!(req.validate().is_ok());
+    }
+
+    #[test]
+    fn short_id_is_eight_hex_chars() {
+        for _ in 0..32 {
+            let id = short_id();
+            assert_eq!(id.len(), 8);
+            assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
+        }
     }
 }

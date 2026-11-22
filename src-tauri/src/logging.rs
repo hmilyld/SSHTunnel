@@ -50,6 +50,24 @@ impl Write for TeeWriter {
     }
 }
 
+/// 单个日志文件上限；超过后在启动时轮转为 `app.log.1`。
+const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+
+fn rotate_if_needed(path: &std::path::Path) {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return;
+    };
+    if metadata.len() < MAX_LOG_BYTES {
+        return;
+    }
+
+    let backup = path.with_extension("log.1");
+    let _ = std::fs::remove_file(&backup);
+    if let Err(e) = std::fs::rename(path, &backup) {
+        eprintln!("轮转日志 {} 失败：{e}", path.display());
+    }
+}
+
 pub fn init() {
     let dir = crate::store::Store::data_dir();
     let log_path = dir.join("app.log");
@@ -59,6 +77,8 @@ pub fn init() {
     if let Err(e) = std::fs::create_dir_all(&dir) {
         eprintln!("无法创建数据目录 {}：{e}", dir.display());
     }
+
+    rotate_if_needed(&log_path);
 
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -72,7 +92,11 @@ pub fn init() {
         .map(|f| Arc::new(Mutex::new(f)));
 
     let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        tracing_subscriber::EnvFilter::new(if cfg!(debug_assertions) { "debug" } else { "info" })
+        tracing_subscriber::EnvFilter::new(if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "info"
+        })
     });
 
     tracing_subscriber::fmt()
@@ -81,4 +105,34 @@ pub fn init() {
         .init();
 
     tracing::info!("日志初始化完成，文件：{}", log_path.display());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rotates_only_when_over_limit() {
+        let dir = std::env::temp_dir().join(format!(
+            "ssh-tunnel-manager-log-test-{}",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("app.log");
+
+        std::fs::write(&path, b"small").unwrap();
+        rotate_if_needed(&path);
+        assert!(path.exists());
+        assert!(!path.with_extension("log.1").exists());
+
+        let file = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        file.set_len(MAX_LOG_BYTES + 1).unwrap();
+        drop(file);
+
+        rotate_if_needed(&path);
+        assert!(!path.exists());
+        assert!(path.with_extension("log.1").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

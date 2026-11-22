@@ -30,6 +30,14 @@ pub fn run() {
     logging::init();
 
     tauri::Builder::default()
+        // 单实例：第二次启动时聚焦已有窗口，避免两个进程同时写 tunnels.json。
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }))
         .setup(|app| {
             // 启动时读取持久化记录（进程存活状态在前端首次 list_tunnels 时计算）
             let store = Store::load();

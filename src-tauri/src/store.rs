@@ -62,7 +62,11 @@ impl Store {
 
     /// 启动时加载；任何异常都降级为空列表并记日志，绝不阻塞应用启动
     pub fn load() -> Self {
-        let path = Self::file_path();
+        Self::load_from(Self::file_path())
+    }
+
+    /// 从指定路径加载（测试用；生产入口是 [`Store::load`]）
+    fn load_from(path: PathBuf) -> Self {
         let mut store = Self {
             path,
             records: Vec::new(),
@@ -78,7 +82,11 @@ impl Store {
                 }
                 Err(e) => {
                     let backup = store.path.with_extension("json.bak");
-                    tracing::error!("{} 解析失败（{e}），已备份为 {}", store.path.display(), backup.display());
+                    tracing::error!(
+                        "{} 解析失败（{e}），已备份为 {}",
+                        store.path.display(),
+                        backup.display()
+                    );
                     let _ = std::fs::rename(&store.path, &backup);
                 }
             },
@@ -93,13 +101,15 @@ impl Store {
             .path
             .parent()
             .ok_or_else(|| AppError::Store("无法确定数据目录".into()))?;
-        std::fs::create_dir_all(dir).map_err(|e| AppError::Store(format!("{}: {e}", dir.display())))?;
+        std::fs::create_dir_all(dir)
+            .map_err(|e| AppError::Store(format!("{}: {e}", dir.display())))?;
 
-        let json =
-            serde_json::to_string_pretty(&self.records).map_err(|e| AppError::Store(e.to_string()))?;
+        let json = serde_json::to_string_pretty(&self.records)
+            .map_err(|e| AppError::Store(e.to_string()))?;
 
         let tmp = self.path.with_extension("json.tmp");
-        std::fs::write(&tmp, &json).map_err(|e| AppError::Store(format!("{}: {e}", tmp.display())))?;
+        std::fs::write(&tmp, &json)
+            .map_err(|e| AppError::Store(format!("{}: {e}", tmp.display())))?;
         // Windows 上 rename 会覆盖目标文件
         std::fs::rename(&tmp, &self.path)
             .map_err(|e| AppError::Store(format!("{}: {e}", self.path.display())))?;
@@ -126,16 +136,30 @@ impl Store {
         let idx = self.records.iter().position(|r| r.id == id)?;
         Some(self.records.remove(idx))
     }
+
+    /// 保存失败时把内存记录恢复为 `backup`，保证内存与磁盘一致。
+    pub(crate) fn save_or_restore(&mut self, backup: Vec<TunnelRecord>) -> Result<(), AppError> {
+        match self.save() {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                self.records = backup;
+                Err(e)
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn record_roundtrips_through_json() {
-        let r = TunnelRecord {
-            id: "3f7a9c21".into(),
+    fn temp_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("ssh-tunnel-manager-test-{}", uuid::Uuid::new_v4()))
+    }
+
+    fn sample_record(id: &str) -> TunnelRecord {
+        TunnelRecord {
+            id: id.into(),
             host: "dev".into(),
             bind: "127.0.0.1".into(),
             local_port: 4096,
@@ -143,11 +167,101 @@ mod tests {
             remote_port: 4096,
             pid: 123456,
             created_at: "2026-09-30 17:25:11".into(),
-        };
+        }
+    }
+
+    #[test]
+    fn record_roundtrips_through_json() {
+        let r = sample_record("3f7a9c21");
         let json = serde_json::to_string(&r).unwrap();
         assert!(json.contains("\"local_port\":4096"));
         let back: TunnelRecord = serde_json::from_str(&json).unwrap();
         assert_eq!(back.id, r.id);
         assert_eq!(back.local_port, 4096);
+    }
+
+    #[test]
+    fn save_and_load_roundtrip() {
+        let dir = temp_dir();
+        let path = dir.join("tunnels.json");
+
+        let mut store = Store::load_from(path.clone());
+        assert!(store.list().is_empty());
+        store.add(sample_record("abc12345"));
+        store.save().unwrap();
+
+        let loaded = Store::load_from(path);
+        assert_eq!(loaded.list().len(), 1);
+        assert_eq!(loaded.list()[0].id, "abc12345");
+        assert_eq!(loaded.list()[0].local_port, 4096);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_file_loads_as_empty() {
+        let dir = temp_dir();
+        let store = Store::load_from(dir.join("tunnels.json"));
+        assert!(store.list().is_empty());
+        assert!(!dir.exists(), "加载不应创建数据目录");
+    }
+
+    #[test]
+    fn corrupt_file_is_backed_up() {
+        let dir = temp_dir();
+        let path = dir.join("tunnels.json");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "{not json").unwrap();
+
+        let store = Store::load_from(path.clone());
+        assert!(store.list().is_empty());
+        assert!(path.with_extension("json.bak").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_creates_parent_directories() {
+        let dir = temp_dir();
+        let path = dir.join("nested").join("tunnels.json");
+
+        let mut store = Store::load_from(path.clone());
+        store.add(sample_record("11223344"));
+        store.save().unwrap();
+        assert!(path.exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_reports_error_when_parent_is_a_file() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+
+        let path = blocker.join("tunnels.json");
+        let mut store = Store::load_from(path);
+        store.add(sample_record("deadbeef"));
+        assert!(store.save().is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn save_or_restore_keeps_memory_unchanged_on_failure() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let blocker = dir.join("blocker");
+        std::fs::write(&blocker, b"x").unwrap();
+
+        let path = blocker.join("tunnels.json");
+        let mut store = Store::load_from(path);
+        let backup = store.list().to_vec();
+        store.add(sample_record("cafebabe"));
+        assert!(store.save_or_restore(backup).is_err());
+        assert!(store.list().is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
