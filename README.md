@@ -79,7 +79,8 @@ SSHTunnel/
         ├── lib.rs               # 组装 Builder：状态、命令、托盘、单实例、关窗隐藏
         ├── ssh_config.rs        # ~/.ssh/config 解析（含单元测试）
         ├── ssh_failure.rs       # ssh 退出状态/stderr 归因、密码认证判定
-        ├── tunnel.rs            # 隧道生命周期：启动判定（本地端口监听探测）、停止、事件广播
+        ├── ssh_start.rs         # askpass、密码预检、端口监听探测、ssh -L 启动
+        ├── tunnel.rs            # 隧道生命周期：状态查询、停止/重启/修改/删除、事件广播
         ├── store.rs             # tunnels.json 持久化（原子写 + 损坏备份，含测试）
         ├── process.rs           # 跨平台进程检测/终止（tasklist·taskkill / kill）
         ├── commands.rs          # Tauri 命令层（前端接口）

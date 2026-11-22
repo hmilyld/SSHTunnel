@@ -17,6 +17,7 @@ mod logging;
 mod process;
 mod ssh_config;
 mod ssh_failure;
+mod ssh_start;
 mod store;
 mod tray;
 mod tunnel;
