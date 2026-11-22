@@ -63,6 +63,14 @@ cargo test --manifest-path src-tauri/Cargo.toml
 (cd src-tauri && cargo audit)
 ```
 
+## Screenshots
+
+Rendered with demo data; no real hosts or credentials are shown.
+
+![Main window](docs/screenshots/main.png)
+
+![Empty state](docs/screenshots/empty.png)
+
 ## Project layout
 
 ```text
