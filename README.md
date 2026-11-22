@@ -10,7 +10,8 @@ SSH 本地端口转发（`ssh -L`）：新建转发、实时查看状态、一�
 - 托盘：Tauri 内置 Tray API（左键切换窗口，右键菜单：显示主窗口 / 退出）
 
 > **版权所有 © 2026 [hmilyld.com](https://hmilyld.com)** ·
-> 仓库：[github.com/hmilyld/SSHTunnel](https://github.com/hmilyld/SSHTunnel)（MIT License）
+> 仓库：[github.com/hmilyld/SSHTunnel](https://github.com/hmilyld/SSHTunnel)（[MIT License](LICENSE)） ·
+> [变更记录](CHANGELOG.md)
 
 ---
 
@@ -20,10 +21,17 @@ SSH 本地端口转发（`ssh -L`）：新建转发、实时查看状态、一�
 SSHTunnel/
 ├── package.json                 # 前端依赖与脚本（pnpm）
 ├── pnpm-workspace.yaml          # pnpm 11+ 构建脚本放行（allowBuilds: esbuild）
+├── LICENSE / CHANGELOG.md       # MIT 许可证 / 版本变更
+├── .nvmrc / rust-toolchain.toml # Node 22 / Rust stable + fmt/clippy
+├── eslint.config.js             # ESLint flat config（TS + React Hooks / Refresh）
+├── .prettierrc.json             # Prettier 格式化配置
+├── .prettierignore
+├── vitest.config.ts             # Vitest + jsdom + v8 coverage
 ├── vite.config.ts               # Vite + React + Tailwind 插件、@ 别名
 ├── tsconfig*.json               # TS 严格模式（app / node 两份）
 ├── index.html                   # 前端入口（首帧前应用主题，避免闪白）
 ├── .github/workflows/
+│   ├── ci.yml                   # push/PR：格式、lint、构建、Rust 检查与测试
 │   └── release.yml              # 打 vX.Y.Z tag 时自动编译各平台安装包并发布 Release
 ├── scripts/
 │   ├── gen-icons.mjs            # 零依赖图标生成（PNG / ICO / ICNS；.icns 用 macOS 824-on-1024 栅格，另出单色托盘模板图）
@@ -37,9 +45,11 @@ SSHTunnel/
 │   ├── lib/
 │   │   ├── api.ts               # tauri command 的类型化封装
 │   │   ├── platform.ts          # 是否 macOS（决定用原生标题栏还是自绘标题栏）
+│   │   ├── tunnelForm.ts        # 端口校验 / 绑定联动 / 命令预览（可测试纯函数）
 │   │   └── utils.ts             # cn() 类名合并
+│   ├── test/setup.ts            # Testing Library / jsdom 初始化
 │   ├── hooks/useTheme.ts        # 深色/浅色主题（localStorage 持久化）
-│   └── components/
+│   └── components/              # 组件旁有 *.test.ts(x)（Vitest）
 │       ├── TitleBar.tsx         # 自绘标题栏（**仅 Windows**：拖拽移动 / 双击最大化 / 最小化·最大化·关闭）
 │       ├── AppHeader.tsx        # 内容区顶栏：说明文字 / 刷新 / 新建转发（标题不重复）
 │       ├── TunnelTable.tsx      # 隧道列表表格（含骨架屏、空状态）
@@ -53,6 +63,7 @@ SSHTunnel/
 │           ├── dialog.tsx  select.tsx  table.tsx
 └── src-tauri/                   # ---- 后端（Rust / Tauri）----
     ├── Cargo.toml               # Rust 依赖
+    ├── deny.toml                # cargo-deny：许可证 allowlist / 漏洞 / 来源
     ├── build.rs                 # tauri-build（能力校验 + Windows 图标资源）
     ├── tauri.conf.json          # 窗口、托盘图标、dev/build 命令
     ├── tauri.windows.conf.json  # Windows 覆盖：decorations:false（无边框 + 自绘标题栏）
@@ -62,14 +73,14 @@ SSHTunnel/
     │   └── icon.png  icon.ico  icon.icns
     └── src/
         ├── main.rs              # 进程入口
-        ├── lib.rs               # 组装 Builder：状态、命令、托盘、关窗隐藏
+        ├── lib.rs               # 组装 Builder：状态、命令、托盘、单实例、关窗隐藏
         ├── ssh_config.rs        # ~/.ssh/config 解析（含单元测试）
         ├── tunnel.rs            # 隧道生命周期：启动判定（本地端口监听探测）、停止、事件广播
         ├── store.rs             # tunnels.json 持久化（原子写 + 损坏备份，含测试）
         ├── process.rs           # 跨平台进程检测/终止（tasklist·taskkill / kill）
         ├── commands.rs          # Tauri 命令层（前端接口）
         ├── tray.rs              # 系统托盘：菜单 + 左键切换窗口（macOS 用单色模板图标）
-        ├── logging.rs           # tracing：stdout + app.log 双写
+        ├── logging.rs           # tracing：stdout + app.log 双写；5 MB 轮转
         └── error.rs             # AppError（thiserror，序列化为中文文案）
 ```
 
@@ -100,7 +111,8 @@ React UI ──invoke──▶ commands.rs ──▶ tunnel.rs ──▶ tokio::
 | 标题栏（按平台） | **macOS/Linux 用系统原生标题栏**（`tauri.conf.json` → `decorations: true`，红绿灯由系统绘制）；**Windows 才是无边框窗口**（`tauri.windows.conf.json` 覆盖为 `decorations: false`）+ 自绘标题栏：左侧图标与标题（整条可拖拽、双击最大化），右侧 46px 方形 最小化/最大化/关闭 按钮（关闭悬停 Windows 红 `#E81123`），关闭按钮 = 隐藏到托盘。前端据此决定是否渲染 `TitleBar`（`src/lib/platform.ts`）——**不会出现两条标题栏** |
 | 无黑窗 | Windows 下以 `CREATE_NO_WINDOW` 创建 ssh / tasklist / taskkill 子进程 |
 | 应用图标（macOS 26） | `.icns` 按 Apple 的 **824-on-1024 图标栅格**渲染：圆角方块 824×824 居中放在 1024 画布上、四周 100px 透明边距、圆角半径 185.4（`scripts/gen-icons.mjs`）；Windows/Linux 的 PNG/ICO 仍满画布。macOS 26 (Tahoe) 会把不符合该栅格的图标缩小并套进灰色圆角底框（社区叫 "icon jail"，观感就是灰白方块），且满画布图标在 Dock 里一向比系统图标更大 |
-| 日志 | `tracing` 同时写 stdout 与 `<配置目录>/app.log`，`RUST_LOG` 可覆盖级别 |
+| 日志 | `tracing` 同时写 stdout 与 `<配置目录>/app.log`，`RUST_LOG` 可覆盖级别；启动时超过 5 MB 轮转为 `app.log.1` |
+| 单实例 | 第二次启动只聚焦已有窗口，避免两个 GUI 进程并发写 `tunnels.json` |
 
 > 维护提醒：平台配置按 **JSON Merge Patch（RFC 7396）** 合并，**数组是整体替换、不会逐项合并**。
 > 所以 `tauri.windows.conf.json` 的 `app.windows` 必须完整复制 `tauri.conf.json` 里的窗口对象
@@ -149,7 +161,7 @@ React UI ──invoke──▶ commands.rs ──▶ tunnel.rs ──▶ tokio::
 
 | 平台 | 依赖 |
 | --- | --- |
-| 通用 | Rust stable（1.77+）、Node.js 20+、**pnpm 10+**、系统 `ssh`（OpenSSH） |
+| 通用 | Rust stable（1.90+）、Node.js 22.22+（CI 使用 22）、**pnpm 11+**（CI 固定 12.5.1）、系统 `ssh`（OpenSSH） |
 | Windows 10/11 | Visual Studio 2022（含“使用 C++ 的桌面开发”）、WebView2 Runtime（系统自带）；OpenSSH 客户端一般已预装 |
 | macOS 12+ | Xcode Command Line Tools（`xcode-select --install`） |
 
@@ -167,9 +179,20 @@ pnpm tauri dev        # 启动 Vite dev server + 编译并运行 Rust 端
 
 ```bash
 pnpm build                      # 前端类型检查 + 产出 dist/
+pnpm format:check               # Prettier 格式检查
+pnpm lint                       # ESLint
+pnpm test                       # Vitest 前端测试
+pnpm test:coverage              # Vitest + 覆盖率
+pnpm audit --audit-level high   # 依赖漏洞检查（high）
 cargo test  --manifest-path src-tauri/Cargo.toml   # Rust 单元测试
 cargo check --manifest-path src-tauri/Cargo.toml   # Rust 编译检查
+cargo fmt   --manifest-path src-tauri/Cargo.toml --all -- --check  # Rust 格式
+cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings  # Rust lint
+(cd src-tauri && cargo deny check)                         # Rust 许可证/漏洞/来源
+(cd src-tauri && cargo audit --ignore RUSTSEC-2026-0543)   # RustSec 漏洞（已知 chrono 豁免）
 ```
+
+> CI 在 push 到 `main` 与 PR 时运行同样的检查（`.github/workflows/ci.yml`）。
 
 ### 打包分发
 
@@ -194,34 +217,32 @@ node scripts/gen-icons.mjs
 并以同名 tag 创建 GitHub Release、上传安装包。
 
 ```bash
-# 1. 先把版本号改好（工作流会校验 tag 与 package.json / tauri.conf.json 一致）
+# 1. 先把版本号改好（工作流会校验 tag 与 package.json / tauri.conf.json / Cargo.toml 一致）
 #    package.json、src-tauri/tauri.conf.json、src-tauri/Cargo.toml 的 version
 # 2. 提交后打 tag 并推送
-git tag v0.3.0 && git push origin v0.3.0
+git tag v1.0.3 && git push origin v1.0.3
 ```
 
 - 触发条件：tag 匹配 `v*`；tag 必须是 `vX.Y.Z`，且与 `package.json`、
-  `src-tauri/tauri.conf.json` 的 `version` 完全一致，否则任务在校验步骤直接失败
+  `src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml` 的 `version` 完全一致，否则任务在校验步骤直接失败
   （避免发出版本号与包内版本对不上的安装包）。
-- **CI 与本地刻意使用不同的包管理器**：
-  - CI（GitHub Actions）：**npm** —— `npm ci --no-audit --no-fund`，依赖**提交的
-    `package-lock.json`**（lockfileVersion 3，220 个包）；CI 上不安装 pnpm。
-  - 本地开发：**pnpm** —— 依赖 `pnpm-lock.yaml`，延续仓库原有工作流
-    （`pnpm install` / `pnpm tauri dev` / `pnpm tauri build`）。
-  - **改依赖时要两个都更新**：`pnpm add <pkg>` 之后再跑一次
-    `npm install --package-lock-only`（若本机 node_modules 是 pnpm 结构，直接在工作区跑
-    npm 可能报错，可先把 `package.json` 复制到空目录生成 lockfile 再拷回）。
-    只改一个的后果：CI 的 `npm ci` 会因 lockfile 与 package.json 不匹配而失败
-    ——这是有意的失败快停，而不是静默装上不同版本的依赖。
-  - 两者解析出的版本一致（同一份 semver 范围），差异只在 node_modules 布局
-    与依赖提升方式，不影响构建产物。
-  - `tauri.conf.json` 的 `beforeBuildCommand` 用 **`npm run build`**（而不是 `pnpm build`）：
-    它必须在只有 npm 的 CI 里也能跑通。本地即使依赖是 pnpm 装的也能正常执行
-    ——`npm run build` 读的是同一份 `package.json` scripts；`beforeDevCommand` 仍是
-    `pnpm dev`，本地开发流程不变。
+- **CI 与本地统一使用 pnpm**：
+  - CI（GitHub Actions）与本地开发都使用 **pnpm**，依赖提交的 `pnpm-lock.yaml`；
+    仓库不再维护 `package-lock.json`。
+  - CI 使用 `pnpm install --frozen-lockfile`：lockfile 与 `package.json` 不一致时直接失败，
+    避免静默安装不同版本的依赖。
+  - 改依赖只需 `pnpm add/remove …` 并提交 `pnpm-lock.yaml`。
+  - `tauri.conf.json` 的 `beforeBuildCommand` 与 `beforeDevCommand` 都是 pnpm
+    （`pnpm build` / `pnpm dev`），本地与 CI 行为一致。
+- 发布前先运行复用的 `.github/workflows/ci.yml` 质量门禁（格式、lint、前端测试/覆盖率、
+  npm 依赖漏洞、构建、Rust fmt/clippy/test、cargo-deny/cargo-audit）；门禁失败时不会编译或发布安装包。
 - 产物矩阵：
   - `windows-latest` → `x86_64-pc-windows-msvc`：NSIS `*-setup.exe` 与 WiX `.msi`
-  - `macos-latest` → `aarch64-apple-darwin`：`.dmg`（未做签名/公证）
+  - `macos-latest` → `aarch64-apple-darwin` / `x86_64-apple-darwin`：两个 `.dmg`
+    （均未做签名/公证）
+- Release 资产文件名使用 `SSHManager_<version>_<platform>_<arch>[setup].<ext>`
+  （例如 `SSHManager_1.0.2_windows_x64-setup.exe`）；**仅改下载文件名**，
+  `productName`、`identifier`、应用数据目录保持不变。
 - Release 正文包含下载指引，并自动追加 GitHub 生成的 Release Notes；
   同时把安装包作为 workflow artifact 归档一份，便于排查。
 - 权限：仅需仓库默认 `GITHUB_TOKEN`（工作流显式声明 `permissions: contents: write`），
@@ -274,7 +295,8 @@ git tag v0.3.0 && git push origin v0.3.0
 3. 新建弹窗与命令预览中均可看到将执行的完整 `ssh -N -L …` 命令。
 
 `~/.ssh/config` 解析：支持 `Host`（一行多别名）、`HostName` / `User` / `Port` /
-`IdentityFile`、`Key=Value` 写法与 `#` 注释；忽略含 `*` `?` `!` 的通配符 Host 与 `Match` 块。
+`IdentityFile`、`Key=Value` 写法与 `#` 注释；同一参数以首个值为准（与 OpenSSH 一致）。
+忽略含 `*` `?` `!` 的通配符 Host 与 `Match` 块；**不展开 `Include`**（当前只读取主配置文件）。
 
 ## 6. 界面描述（布局）
 
@@ -289,7 +311,7 @@ git tag v0.3.0 && git push origin v0.3.0
 │ a1b2c3d4 web   0.0.0.0:8080   127.0.0.1:80  …    …   ●已停止│   空状态/骨架屏）
 │                              [关闭] / [启动][修改][删除]      │
 ├──────────────────────────────────────────────────────────────┤
-│ 共 2 条隧道 · ●运行中 1 · ●已停止 1        v0.2.0 · © 2026 hmilyld.com · [📁] │  底部信息栏
+│ 共 2 条隧道 · ●运行中 1 · ●已停止 1        v1.0.2 · © 2026 hmilyld.com · [📁] │  底部信息栏
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -368,7 +390,7 @@ git tag v0.3.0 && git push origin v0.3.0
 | 功能 | 实现 |
 | --- | --- |
 | **版权显示** | 底部信息栏常驻 `© 2026 hmilyld.com`；元数据同步到 `package.json`（`author`/`homepage`/`repository`/`license`）与 `src-tauri/Cargo.toml`（`authors`/`homepage`/`repository`）；README 顶部加版权行 |
-| **打 tag 自动发版** | 新增 `.github/workflows/release.yml`：推送 `vX.Y.Z` tag → 校验 tag 与 `package.json`/`tauri.conf.json` 版本一致 → 矩阵编译 `windows-latest`（NSIS `*-setup.exe` + WiX `.msi`）与 `macos-latest`（`.dmg`）→ 以 tag 创建 Release 并上传安装包；另归档一份 workflow artifact。**CI 依赖 npm（`package-lock.json`），本地仍是 pnpm** |
+| **打 tag 自动发版** | 新增 `.github/workflows/release.yml`：推送 `vX.Y.Z` tag → 校验 tag 与 `package.json`/`tauri.conf.json` 版本一致 → 矩阵编译 `windows-latest`（NSIS `*-setup.exe` + WiX `.msi`）与 `macos-latest`（`.dmg`）→ 以 tag 创建 Release 并上传安装包；另归档一份 workflow artifact。**CI 与本地统一使用 pnpm（`pnpm-lock.yaml`）** |
 | **底部信息栏重设计** | 去掉整行数据路径（改为「打开数据目录」按钮 + 悬停提示完整路径）；新增版本号 `vX.Y.Z`（`getVersion()`）；移除两条无信息量的静态说明。新增 `data_dir` / `reveal_data_dir` 命令（后者只打开后端解析的目录，不接受前端传参），并清理 `capabilities/default.json` 中 4 条未使用的窗口权限 |
 
 ### 逻辑修复
@@ -401,18 +423,20 @@ git tag v0.3.0 && git push origin v0.3.0
   `Select` 的 `SelectGroup`/`Label`/`Separator`、`Badge` 的 `danger`/`warning` 等）：
   它们是组件库的约定 API，删除会让后续新增界面必须改基础组件，属于脚手架而非死代码。
 
-### 安全性结论（未发现漏洞，供后续维护参考）
+### 安全性结论（未发现可利用漏洞；有已知维护性告警，供后续维护参考）
 
 - 密码只以子进程环境变量（`SSH_ASKPASS` + `STM_ASKPASS_PWD`）传递，不落盘、不进日志；
   `askpass` 辅助模式只写 stdout。已确认全部 `tracing` 调用点都不含密码。
 - `main.rs` 的辅助模式需要「带参数 + 有 `SSH_ASKPASS` 环境变量」两个条件同时成立，
   正常 GUI 启动（无参数）不会误打印密码。
 - 所有外部命令（`ssh` / `tasklist` / `taskkill` / `powershell` / `lsof` / `ss`）都通过
-  参数数组传参，端口是 `u16`，不存在命令注入路径；终止进程前强制校验进程名是 `ssh`，
-  避免 PID 复用导致误杀。
-- 已知项：`tauri.conf.json` 的 `csp` 为 `null`（未设置 CSP）。因为不加载任何远程内容、
-  未开启 `withGlobalTauri`、能力集只放开了自绘标题栏所需的窗口权限，风险很低；
-  若要加固可在此补一条 `default-src 'self'` 级别的策略。
+  参数数组传参，端口是 `u16`；Host / Bind / Remote 还会拒绝以 `-` 开头或含空白/控制字符的输入，
+  防止 ssh 参数注入。终止进程前强制校验进程名是 `ssh`，避免 PID 复用导致误杀。
+- `tauri.conf.json` 已启用 CSP：限制远程资源，保留 `ipc:` / 本地开发 URL、内联样式与内联脚本
+  所需来源。内联脚本的 `'unsafe-inline'` 是后续可继续收紧的点（可改为外链脚本 + hash/nonce）。
+- CI 运行 `cargo-deny`（许可证/漏洞/来源）与 `cargo-audit`；`npm audit` 无已知漏洞。
+  已知例外：`chrono` 的“无人维护”告警在 `deny.toml`/CI 中有理由地忽略，迁移到维护中的
+  时间库列为后续任务。
 
 ## 9. 已知边界 / 待真机补充
 
@@ -432,7 +456,17 @@ git tag v0.3.0 && git push origin v0.3.0
   生成，也无法本地验证。Tauri 2.11+ 的 `bundle.icon` 已支持直接给 `.icon` / `Assets.car`
   （tauri-apps/tauri#14671），需要时可在 Mac 上用 Icon Composer 做一版再挂进 `tauri.macos.conf.json`。
   若栅格修正后 Dock 里仍是灰底方块，请拍一张 Dock 截图再决定是否走这条路。
-- 打包分发已在本机执行：`pnpm tauri build` 产出
-  `SSH Tunnel Manager_0.2.0_x64_en-US.msi`（2.14 MB）与
-  `SSH Tunnel Manager_0.2.0_x64-setup.exe`（1.53 MB）；
-  macOS（dmg/app）需在 macOS 机器上执行同样的 `pnpm tauri build`。
+- 本轮在 Windows 上通过 `pnpm tauri build --no-bundle` 验证了 release 二进制；
+  安装包（MSI/NSIS）与 macOS DMG 需在对应平台执行 `pnpm tauri build`，
+  具体文件名以实际构建输出为准（Release 资产会按 `SSHManager_*` 规则重命名）。
+- 本轮新增的单实例、CSP、启动存活确认、cargo-deny/cargo-audit 还需要在真实
+  Windows/macOS UI 与 GitHub Actions 首次运行中确认；本地已验证编译、单测、静态检查与
+  release 二进制构建。
+
+---
+
+## 10. 许可证
+
+本项目以 [MIT License](LICENSE) 发布。
+
+Copyright (c) 2026 [hmilyld.com](https://hmilyld.com)

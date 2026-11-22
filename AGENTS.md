@@ -17,17 +17,29 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
 
 - Node is managed by **fnm**; run this prefix before any `pnpm` command:
   `fnm env --use-on-cd --shell powershell | Out-String | Invoke-Expression`
-- Package manager is **pnpm** for all local work — never npm/yarn. Allowed build scripts live in
+  Vitest 5 / jsdom 31 require Node **22.22+**; run `fnm use 22` before `pnpm test`
+  (Node 25 is not supported by jsdom yet).
+- Package manager is **pnpm** for all local and CI work — never npm/yarn. Allowed build scripts live in
   `pnpm-workspace.yaml` → `allowBuilds:` (pnpm 11+ removed `package.json#pnpm.onlyBuiltDependencies`;
-  `ERR_PNPM_IGNORED_BUILDS` means this key is wrong/missing).
-  The one npm exception is regenerating `package-lock.json` for CI (see Conventions).
+  `ERR_PNPM_IGNORED_BUILDS` means this key is wrong/missing). CI pins pnpm 12.5.1 in
+  `release.yml`; there is no `package-lock.json` (see Conventions).
 - **Cargo needs the proxy** or crates.io crawls: `$env:CARGO_HTTP_PROXY="http://127.0.0.1:7897"`.
   Same value for `HTTPS_PROXY`/`HTTP_PROXY` when using git/gh.
-- Verify (order doesn't matter, both are required):
-  - `cargo check --manifest-path src-tauri/Cargo.toml`
-  - `cargo test --manifest-path src-tauri/Cargo.toml` (9 tests; one spawns PowerShell ≈1.4 s;
-    filter: `cargo test ... <name>`)
+- Verify (order doesn't matter, all are required):
+  - `pnpm format:check` (Prettier)
+  - `pnpm lint` (ESLint flat config)
+  - `pnpm test` (Vitest; 14 tests)
+  - `pnpm audit --audit-level high`
   - `pnpm build` (= `tsc -b` strict + vite production build)
+  - `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
+  - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
+  - `cargo check --manifest-path src-tauri/Cargo.toml`
+  - `cargo test --manifest-path src-tauri/Cargo.toml` (22 tests; one spawns PowerShell ≈1.4 s;
+    filter: `cargo test ... <name>`)
+  - `cd src-tauri; cargo deny check` (licenses/advisories/sources; `deny.toml` in `src-tauri/`)
+  - `cd src-tauri; cargo audit --ignore RUSTSEC-2026-0543`
+  - CI mirrors these checks in `.github/workflows/ci.yml` (frontend + Windows/macOS Rust matrix
+    + cargo-deny/cargo-audit).
 - Dev: `pnpm tauri dev`. Release installers: `pnpm tauri build` →
   `src-tauri/target/release/bundle/{msi,nsis}/` (2–6 min; editing `tauri.conf.json` **or
   `tauri.windows.conf.json`** forces a tauri-codegen rebuild).
@@ -47,6 +59,8 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
 
 ## Gotchas that will bite you
 
+- **Single instance**: `tauri-plugin-single-instance` focuses the existing `main` window; the second
+  process must not reach `run()`. The plugin requires Rust 1.90+ (`rust-version` is set accordingly).
 - **Never write source files with `Add-Content`/`Set-Content`** — PS 5.1 defaults to ANSI/GBK and
   corrupts UTF-8 (has corrupted `tunnel.rs`). Use the edit/write tools, or
   `[IO.File]::WriteAllText($p, $text, [Text.UTF8Encoding]::new($false))`.
@@ -101,20 +115,16 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
   push verified changes to `origin/main` (github.com/hmilyld/SSHTunnel, public).
 - Don't commit screenshots/build artifacts (`node_modules`, `dist`, `src-tauri/target`,
   `src-tauri/gen/schemas` are gitignored).
-- **Releasing = push a `vX.Y.Z` tag.** `.github/workflows/release.yml` then builds the
-  installers (Windows NSIS `.exe` + WiX `.msi`, macOS `.dmg`) and publishes a GitHub Release.
-  Bump `version` in `package.json` **and** `src-tauri/tauri.conf.json` (Cargo.toml too, for
-  consistency) first: the workflow hard-fails when the tag and those files disagree.
-- **Two package managers on purpose, and two lockfiles to keep in sync:**
-  - CI (GitHub Actions) uses **npm** — `npm ci`, driven by the committed `package-lock.json`.
-  - Local development uses **pnpm** — `pnpm install`, driven by `pnpm-lock.yaml`.
-  - After changing dependencies run `pnpm add/remove …` **and** regenerate the npm lockfile
-    (`npm install --package-lock-only` in a clean dir holding just `package.json`, then copy the
-    file back — running npm directly in this workspace can fail on pnpm's `node_modules` layout).
-    If only one is updated, CI fails fast at `npm ci` instead of silently installing different
-    versions. `tauri.conf.json` → `beforeBuildCommand` is `npm run build` on purpose: it must also
-    work in CI, where only npm exists. Local installs stay pnpm-driven; `npm run build` reads the
-    same `package.json` scripts, and `beforeDevCommand` remains `pnpm dev`.
+- **Releasing = push a `vX.Y.Z` tag.** `.github/workflows/release.yml` first calls the reusable
+  `.github/workflows/ci.yml` as a quality gate, then builds the installers (Windows NSIS `.exe` +
+  WiX `.msi`, macOS `.dmg`) and publishes a GitHub Release. Bump `version` in `package.json`
+  **and** `src-tauri/tauri.conf.json` (Cargo.toml too, for consistency) first: the workflow
+  hard-fails when the tag and those files disagree.
+- **One package manager: pnpm.** CI and local development both use `pnpm install`, driven by
+  the committed `pnpm-lock.yaml`; there is no `package-lock.json`. CI runs
+  `pnpm install --frozen-lockfile`, so a stale lockfile fails fast instead of silently installing
+  different versions. `tauri.conf.json` → `beforeBuildCommand` is `pnpm build` and
+  `beforeDevCommand` is `pnpm dev`.
 - Copyright/author metadata lives in three places and must stay in sync:
   `package.json` (`author`/`homepage`), `src-tauri/Cargo.toml` (`authors`/`homepage`), and the
   footer line in `src/components/StatusBar.tsx` (`© 2026 hmilyld.com`).
