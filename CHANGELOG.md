@@ -26,6 +26,7 @@
 - 包管理统一为 pnpm，删除 `package-lock.json`；CI 与 Tauri `beforeBuildCommand` 均使用 pnpm。
 - 最低 Rust 版本提升到 1.90（单实例插件要求）；新增 `rust-toolchain.toml`。
 - Node 要求提升到 22.22+（Vitest 5/jsdom 31），新增 `.nvmrc` 与 `engines`。
+- 本地时间格式化从 unmaintained 的 `chrono` 迁移到 `jiff`，移除 advisory 忽略。
 - macOS 发布矩阵增加 Intel `x86_64-apple-darwin`。
 - Release 资产文件名改为 `SSHManager_<version>_<platform>_<arch>...`，仅改下载名，不动安装身份。
 - `~/.ssh/config` 的重复 `Host` 块改为“每个参数首个值生效”，与 OpenSSH 一致。

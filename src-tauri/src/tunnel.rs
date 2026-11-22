@@ -150,6 +150,11 @@ async fn kill_unstarted(child: &mut tokio::process::Child) {
     }
 }
 
+/// 当前本地时间 `YYYY-MM-DD HH:MM:SS`（与历史 tunnels.json 格式保持一致）。
+fn now_timestamp() -> String {
+    jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S").to_string()
+}
+
 /// 生成 8 位短 ID（截断 UUID v4）
 fn short_id() -> String {
     let full = uuid::Uuid::new_v4().simple().to_string();
@@ -628,7 +633,7 @@ pub async fn start_tunnel(
             remote_host: req.remote_host.trim().to_string(),
             remote_port: req.remote_port as u16,
             pid,
-            created_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            created_at: now_timestamp(),
         };
         store.add(record.clone());
         match store.save() {
@@ -1040,5 +1045,17 @@ mod tests {
             assert_eq!(id.len(), 8);
             assert!(id.chars().all(|c| c.is_ascii_hexdigit()));
         }
+    }
+
+    #[test]
+    fn timestamp_has_expected_shape() {
+        let ts = now_timestamp();
+        assert_eq!(ts.len(), 19);
+        assert_eq!(&ts[4..5], "-");
+        assert_eq!(&ts[7..8], "-");
+        assert_eq!(&ts[10..11], " ");
+        assert_eq!(&ts[13..14], ":");
+        assert_eq!(&ts[16..17], ":");
+        assert!(ts.chars().filter(|c| c.is_ascii_digit()).count() >= 14);
     }
 }

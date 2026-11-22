@@ -192,8 +192,8 @@ cargo test  --manifest-path src-tauri/Cargo.toml   # Rust 单元测试
 cargo check --manifest-path src-tauri/Cargo.toml   # Rust 编译检查
 cargo fmt   --manifest-path src-tauri/Cargo.toml --all -- --check  # Rust 格式
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings  # Rust lint
-(cd src-tauri && cargo deny check)                         # Rust 许可证/漏洞/来源
-(cd src-tauri && cargo audit --ignore RUSTSEC-2026-0543)   # RustSec 漏洞（已知 chrono 豁免）
+(cd src-tauri && cargo deny check)   # Rust 许可证/漏洞/来源
+(cd src-tauri && cargo audit)        # RustSec 漏洞
 cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lcov --output-path lcov.info  # Rust 覆盖率
 ```
 
@@ -443,8 +443,7 @@ git tag v1.0.3 && git push origin v1.0.3
 - `tauri.conf.json` 已启用 CSP：限制远程资源，保留 `ipc:` / 本地开发 URL、内联样式与内联脚本
   所需来源。内联脚本的 `'unsafe-inline'` 是后续可继续收紧的点（可改为外链脚本 + hash/nonce）。
 - CI 运行 `cargo-deny`（许可证/漏洞/来源）与 `cargo-audit`；`npm audit` 无已知漏洞。
-  已知例外：`chrono` 的“无人维护”告警在 `deny.toml`/CI 中有理由地忽略，迁移到维护中的
-  时间库列为后续任务。
+  本地时间格式化使用维护中的 `jiff`，不再依赖 unmaintained 的 `chrono`，无需 advisory 忽略。
 
 ## 9. 已知边界 / 待真机补充
 

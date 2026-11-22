@@ -2,10 +2,7 @@
 # 运行：cd src-tauri && cargo deny check
 
 [advisories]
-ignore = [
-    # chrono 仅用于本地时间戳格式化，不处理不可信输入；迁移到维护中的时间库另立任务。
-    { id = "RUSTSEC-2026-0543", reason = "chrono is used only for local timestamp formatting; no untrusted input. Migration tracked in CHANGELOG." },
-]
+# 当前没有需要忽略的 advisory。
 
 [licenses]
 allow = [

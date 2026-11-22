@@ -135,9 +135,9 @@ jobs:
         working-directory: src-tauri
         run: cargo deny check
 
-      - name: cargo audit（忽略 chrono 的 unmaintained 告警）
+      - name: cargo audit
         working-directory: src-tauri
-        run: cargo audit --ignore RUSTSEC-2026-0543
+        run: cargo audit
 
   rust-coverage:
     name: Rust 覆盖率
