@@ -6,8 +6,9 @@
 //! - 忽略 `Match` 块内的条件配置（其作用域无法在静态解析中确定）
 //! - 支持 `Key Value` 与 `Key=Value` 两种写法、行内 `#` 注释、引号包裹的值
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use glob::glob;
 use serde::Serialize;
 
 /// 一个可直接用于 `ssh <alias>` 的主机条目
@@ -31,6 +32,118 @@ pub fn default_config_path() -> PathBuf {
         .unwrap_or_else(std::env::temp_dir)
         .join(".ssh")
         .join("config")
+}
+
+/// 读取主配置并递归展开 `Include`，再交给 [`parse`]。
+///
+/// `Include` 的相对路径按 OpenSSH 约定相对于 `~/.ssh`；支持 `~` 与 glob。
+/// 循环引用会被跳过，嵌套深度上限 16。
+pub fn load_hosts(path: &Path) -> std::io::Result<Vec<SshHost>> {
+    let base = path.parent().map(Path::to_path_buf).unwrap_or_else(|| {
+        dirs::home_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join(".ssh")
+    });
+    load_hosts_inner(path, &base)
+}
+
+fn load_hosts_inner(path: &Path, base: &Path) -> std::io::Result<Vec<SshHost>> {
+    let mut expanded = String::new();
+    let mut stack = Vec::new();
+    expand_file(path, base, 0, &mut stack, &mut expanded)?;
+    Ok(parse(&expanded))
+}
+
+fn expand_file(
+    path: &Path,
+    base: &Path,
+    depth: usize,
+    stack: &mut Vec<PathBuf>,
+    out: &mut String,
+) -> std::io::Result<()> {
+    if depth > 16 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Include 嵌套过深（超过 16 层）",
+        ));
+    }
+
+    let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    if stack.contains(&canonical) {
+        return Ok(());
+    }
+    stack.push(canonical);
+
+    let content = std::fs::read_to_string(path)?;
+    for raw in content.lines() {
+        let line = strip_comment(raw).trim();
+        if line.is_empty() {
+            out.push('\n');
+            continue;
+        }
+
+        let key_end = line
+            .find(|c: char| c.is_whitespace() || c == '=')
+            .unwrap_or(line.len());
+        let key = line[..key_end].to_ascii_lowercase();
+        let mut rest = line[key_end..].trim_start();
+        if let Some(stripped) = rest.strip_prefix('=') {
+            rest = stripped.trim_start();
+        }
+
+        if key != "include" {
+            out.push_str(line);
+            out.push('\n');
+            continue;
+        }
+
+        for token in rest.split_whitespace() {
+            let include = expand_tilde(&unquote(token));
+            let pattern = if include.is_absolute() {
+                include
+            } else {
+                base.join(include)
+            };
+            let pattern_text = pattern.to_string_lossy().into_owned();
+
+            if !pattern_text.contains('*')
+                && !pattern_text.contains('?')
+                && !pattern_text.contains('[')
+            {
+                if pattern.exists() {
+                    expand_file(&pattern, base, depth + 1, stack, out)?;
+                }
+                continue;
+            }
+
+            let mut matches: Vec<PathBuf> = glob(&pattern_text)
+                .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e.to_string()))?
+                .filter_map(Result::ok)
+                .collect();
+            matches.sort();
+            for included in matches {
+                expand_file(&included, base, depth + 1, stack, out)?;
+            }
+        }
+    }
+
+    stack.pop();
+    Ok(())
+}
+
+fn expand_tilde(value: &str) -> PathBuf {
+    if value == "~" {
+        return dirs::home_dir().unwrap_or_else(std::env::temp_dir);
+    }
+    if let Some(rest) = value
+        .strip_prefix("~/")
+        .or_else(|| value.strip_prefix("~\\"))
+    {
+        return dirs::home_dir()
+            .unwrap_or_else(std::env::temp_dir)
+            .join(rest);
+    }
+    PathBuf::from(value)
 }
 
 /// 是否为通配符 Host（`*` / `?` / 否定 `!`）
@@ -248,5 +361,90 @@ Host dev
         assert_eq!(hosts[0].port, Some(22));
         // 首个块没设置 IdentityFile，后续块可以补充
         assert_eq!(hosts[0].identity_file.as_deref(), Some("~/.ssh/second"));
+    }
+
+    fn temp_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("ssh-config-test-{}", uuid::Uuid::new_v4()))
+    }
+
+    #[test]
+    fn expands_include_relative_glob() {
+        let dir = temp_dir();
+        let conf = dir.join("config.d");
+        std::fs::create_dir_all(&conf).unwrap();
+        let main = dir.join("config");
+        std::fs::write(
+            &main,
+            "Include config.d/*.conf\nHost local\n    HostName local.example\n",
+        )
+        .unwrap();
+        std::fs::write(conf.join("a.conf"), "Host dev\n    HostName dev.example\n").unwrap();
+        std::fs::write(conf.join("b.conf"), "Host web\n    HostName web.example\n").unwrap();
+
+        let hosts = load_hosts_inner(&main, &dir).unwrap();
+        let aliases: Vec<_> = hosts.iter().map(|h| h.alias.as_str()).collect();
+        assert_eq!(aliases, vec!["dev", "web", "local"]);
+        assert_eq!(hosts[0].hostname, "dev.example");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn include_cycle_does_not_loop() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = dir.join("config");
+        let other = dir.join("other.conf");
+        std::fs::write(
+            &main,
+            "Include other.conf\nHost main\n    HostName main.example\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &other,
+            "Include config\nHost other\n    HostName other.example\n",
+        )
+        .unwrap();
+
+        let hosts = load_hosts_inner(&main, &dir).unwrap();
+        let aliases: Vec<_> = hosts.iter().map(|h| h.alias.as_str()).collect();
+        assert_eq!(aliases, vec!["other", "main"]);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn missing_include_is_ignored() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = dir.join("config");
+        std::fs::write(&main, "Include missing/*.conf\nHost local\n").unwrap();
+
+        let hosts = load_hosts_inner(&main, &dir).unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].alias, "local");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn include_inside_host_context_keeps_scope() {
+        let dir = temp_dir();
+        std::fs::create_dir_all(&dir).unwrap();
+        let main = dir.join("config");
+        let extra = dir.join("extra.conf");
+        std::fs::write(
+            &main,
+            "Host dev\n    HostName dev.example\n    Include extra.conf\n",
+        )
+        .unwrap();
+        std::fs::write(&extra, "    User alice\n    Port 2222\n").unwrap();
+
+        let hosts = load_hosts_inner(&main, &dir).unwrap();
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].user.as_deref(), Some("alice"));
+        assert_eq!(hosts[0].port, Some(2222));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -302,7 +302,8 @@ git tag v1.0.3 && git push origin v1.0.3
 
 `~/.ssh/config` 解析：支持 `Host`（一行多别名）、`HostName` / `User` / `Port` /
 `IdentityFile`、`Key=Value` 写法与 `#` 注释；同一参数以首个值为准（与 OpenSSH 一致）。
-忽略含 `*` `?` `!` 的通配符 Host 与 `Match` 块；**不展开 `Include`**（当前只读取主配置文件）。
+支持 `Include`（相对路径按 `~/.ssh`、支持 `~` 与 glob；循环引用跳过，嵌套上限 16 层）。
+忽略含 `*` `?` `!` 的通配符 Host 与 `Match` 块。
 
 ## 6. 界面描述（布局）
 

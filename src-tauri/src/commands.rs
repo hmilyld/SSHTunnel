@@ -17,9 +17,8 @@ pub fn list_hosts() -> Result<Vec<ssh_config::SshHost>, AppError> {
         tracing::warn!("未找到 SSH 配置文件 {}", path.display());
         return Ok(Vec::new());
     }
-    let content = std::fs::read_to_string(&path)
+    let hosts = ssh_config::load_hosts(&path)
         .map_err(|e| AppError::SshConfig(format!("{}: {e}", path.display())))?;
-    let hosts = ssh_config::parse(&content);
     tracing::debug!("解析到 {} 个 SSH Host", hosts.len());
     Ok(hosts)
 }

@@ -35,7 +35,7 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
   - `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`
   - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings`
   - `cargo check --manifest-path src-tauri/Cargo.toml`
-  - `cargo test --manifest-path src-tauri/Cargo.toml` (22 tests; one spawns PowerShell ≈1.4 s;
+  - `cargo test --manifest-path src-tauri/Cargo.toml` (26 tests; one spawns PowerShell ≈1.4 s;
     filter: `cargo test ... <name>`)
   - `cd src-tauri; cargo deny check` (licenses/advisories/sources; `deny.toml` in `src-tauri/`)
   - `cd src-tauri; cargo audit --ignore RUSTSEC-2026-0543`

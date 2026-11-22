@@ -28,8 +28,8 @@
 - Node 要求提升到 22.22+（Vitest 5/jsdom 31），新增 `.nvmrc` 与 `engines`。
 - macOS 发布矩阵增加 Intel `x86_64-apple-darwin`。
 - Release 资产文件名改为 `SSHManager_<version>_<platform>_<arch>...`，仅改下载名，不动安装身份。
-- `~/.ssh/config` 的重复 `Host` 块改为“每个参数首个值生效”，与 OpenSSH 一致；
-  明确当前不展开 `Include`。
+- `~/.ssh/config` 的重复 `Host` 块改为“每个参数首个值生效”，与 OpenSSH 一致。
+- 支持 `Include`（相对 `~/.ssh`、`~`、glob；循环跳过、嵌套上限 16 层）。
 - 启动判定先检查 ssh 子进程状态，并在本地端口监听后加短暂存活确认，降低端口被抢占时的假成功。
 - 抽取 `ssh_failure.rs`（密码认证判定 / 失败归因），缩小 `tunnel.rs` 职责。
 - 命令预览可选中/一键复制；删除记录前二次确认；轮询失败只提示一次；窗口隐藏时暂停轮询。
