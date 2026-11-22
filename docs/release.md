@@ -34,6 +34,15 @@ git push origin v1.1.0
 
 任一门禁失败时，不编译也不发布安装包。
 
+## Release 正文
+
+构建前，`release.yml` 运行 `node scripts/release-notes.mjs vX.Y.Z`，从
+`CHANGELOG.md` 提取对应版本章节，作为 Release 正文的“更新内容”。工作流设置
+`generateReleaseNotes: false`，避免与自动生成的 PR 列表重复。
+
+发布新版本前，应先在 `CHANGELOG.md` 增加 `## [X.Y.Z] - YYYY-MM-DD` 章节；章节缺失
+时发布步骤会失败。
+
 ## 产物矩阵
 
 | Runner | Target | 产物 |

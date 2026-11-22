@@ -125,7 +125,9 @@ Detailed docs live in `README.md` and `docs/` — trust code + docs over memory.
   `.github/workflows/ci.yml` as a quality gate, then builds the installers (Windows NSIS `.exe` +
   WiX `.msi`, macOS `.dmg`) and publishes a GitHub Release. Bump `version` in `package.json`
   **and** `src-tauri/tauri.conf.json` (Cargo.toml too, for consistency) first: the workflow
-  hard-fails when the tag and those files disagree.
+  hard-fails when the tag and those files disagree. Add the matching
+  `## [X.Y.Z] - YYYY-MM-DD` section to `CHANGELOG.md`; release notes are generated from it by
+  `scripts/release-notes.mjs`.
 - **One package manager: pnpm.** CI and local development both use `pnpm install`, driven by
   the committed `pnpm-lock.yaml`; there is no `package-lock.json`. CI runs
   `pnpm install --frozen-lockfile`, so a stale lockfile fails fast instead of silently installing
