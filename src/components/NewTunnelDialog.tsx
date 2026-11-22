@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { AlertIcon, PencilIcon, SpinnerIcon, TerminalIcon } from "@/components/icons";
+import { AlertIcon, CopyIcon, PencilIcon, SpinnerIcon, TerminalIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -29,6 +29,12 @@ import {
   type StartTunnelRequest,
   type Tunnel,
 } from "@/lib/api";
+import {
+  BIND_OPTIONS,
+  bindForRemoteHost,
+  buildCommandPreview,
+  validatePort,
+} from "@/lib/tunnelForm";
 
 interface NewTunnelDialogProps {
   open: boolean;
@@ -39,36 +45,6 @@ interface NewTunnelDialogProps {
   onPasswordNeeded: (request: StartTunnelRequest, message: string) => void;
   /** 传入记录 = 修改模式（仅用于已停止的记录，保存配置、不启动进程） */
   editing?: Tunnel | null;
-}
-
-const BIND_OPTIONS = [
-  { value: "127.0.0.1", label: "127.0.0.1 — 仅本机访问（推荐）" },
-  { value: "localhost", label: "localhost — 仅本机访问（等价于 127.0.0.1）" },
-  { value: "0.0.0.0", label: "0.0.0.0 — 允许局域网 / 外部访问" },
-  { value: "::1", label: "::1 — IPv6 仅本机访问" },
-];
-
-/**
- * 远程目标主机 → 本地绑定地址 的联动规则：
- * - `localhost` → 绑定 `localhost`
- * - `127.0.0.1` → 绑定 `127.0.0.1`
- * - 其他地址不干预（保持当前选择）
- */
-function bindForRemoteHost(remoteHost: string, current?: string): string {
-  const t = remoteHost.trim().toLowerCase();
-  if (t === "localhost") return "localhost";
-  if (t === "127.0.0.1") return "127.0.0.1";
-  return current ?? "127.0.0.1";
-}
-
-/** 端口校验：必填、纯数字、1-65535 */
-function validatePort(value: string): string | null {
-  const v = value.trim();
-  if (!v) return "必填";
-  if (!/^\d+$/.test(v)) return "必须是整数";
-  const n = Number(v);
-  if (n < 1 || n > 65535) return "范围 1-65535";
-  return null;
 }
 
 export function NewTunnelDialog({
@@ -138,11 +114,10 @@ export function NewTunnelDialog({
   };
 
   // 将要执行的命令实时预览
-  const preview = useMemo(() => {
-    const lp = localPort.trim() || remotePort.trim() || "<local_port>";
-    const rp = remotePort.trim() || "<remote_port>";
-    return `ssh -N -L ${bind}:${lp}:${remoteHost.trim() || "localhost"}:${rp} ${host || "<host>"}`;
-  }, [bind, host, localPort, remoteHost, remotePort]);
+  const preview = useMemo(
+    () => buildCommandPreview({ bind, host, localPort, remoteHost, remotePort }),
+    [bind, host, localPort, remoteHost, remotePort],
+  );
 
   const submit = async () => {
     const nextErrors: Record<string, string> = {};
@@ -192,6 +167,18 @@ export function NewTunnelDialog({
     }
   };
 
+  const copyPreview = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("当前环境不支持剪贴板");
+      }
+      await navigator.clipboard.writeText(preview);
+      toast.success("命令已复制");
+    } catch (e) {
+      toast.error("复制失败", { description: String(e) });
+    }
+  };
+
   const noHosts = !hostsLoading && !hostsError && hosts.length === 0;
 
   return (
@@ -220,10 +207,22 @@ export function NewTunnelDialog({
 
         {/* 命令预览 */}
         <div className="rounded-lg border border-border bg-muted/60 px-3 py-2.5">
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {editing ? "保存后启动时将执行" : "将执行"}
-          </p>
-          <code className="block break-all text-xs leading-relaxed text-foreground/90">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {editing ? "保存后启动时将执行" : "将执行"}
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void copyPreview()}
+              aria-label="复制命令"
+              title="复制命令"
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <code className="block select-text break-all text-xs leading-relaxed text-foreground/90">
             {preview}
           </code>
         </div>
@@ -243,13 +242,21 @@ export function NewTunnelDialog({
                 <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
                 <span>
                   未找到可用的 Host 别名。请在
-                  <code className="mx-1 rounded bg-amber-500/10 px-1">{configPath || "~/.ssh/config"}</code>
+                  <code className="mx-1 rounded bg-amber-500/10 px-1">
+                    {configPath || "~/.ssh/config"}
+                  </code>
                   中添加 Host 条目（通配符如 <code>*</code> 会被忽略）。
                 </span>
               </div>
             ) : (
               <>
-                <Select value={host} onValueChange={(v) => { setHost(v); setErrors((p) => ({ ...p, host: "" })); }}>
+                <Select
+                  value={host}
+                  onValueChange={(v) => {
+                    setHost(v);
+                    setErrors((p) => ({ ...p, host: "" }));
+                  }}
+                >
                   <SelectTrigger id="host" aria-invalid={!!errors.host}>
                     <SelectValue placeholder="选择 ~/.ssh/config 中的 Host" />
                   </SelectTrigger>

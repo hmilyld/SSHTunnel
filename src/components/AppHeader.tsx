@@ -20,8 +20,8 @@ export function AppHeader({ onNew, onRefresh, refreshing }: AppHeaderProps) {
     <header className="flex shrink-0 items-center justify-between gap-4">
       <p className="min-w-0 truncate text-sm text-muted-foreground">
         管理到 Linux 服务器的{" "}
-        <span className="font-mono font-medium text-foreground/80">ssh -L</span>{" "}
-        本地端口转发 — 记录持久保存，关闭后可随时重新启动
+        <span className="font-mono font-medium text-foreground/80">ssh -L</span> 本地端口转发 —
+        记录持久保存，关闭后可随时重新启动
       </p>
 
       <div className="flex shrink-0 items-center gap-2">

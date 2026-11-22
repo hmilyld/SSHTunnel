@@ -58,7 +58,10 @@ function SkeletonRows() {
         <TableRow key={i}>
           {Array.from({ length: 8 }).map((_, j) => (
             <TableCell key={j}>
-              <div className="h-4 animate-pulse rounded bg-muted" style={{ width: `${45 + ((i + j) % 4) * 15}%` }} />
+              <div
+                className="h-4 animate-pulse rounded bg-muted"
+                style={{ width: `${45 + ((i + j) % 4) * 15}%` }}
+              />
             </TableCell>
           ))}
         </TableRow>
@@ -120,9 +123,7 @@ export function TunnelTable({
             return (
               <TableRow key={t.id}>
                 <TableCell>
-                  <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium">
-                    {t.id}
-                  </code>
+                  <code className="rounded bg-muted px-1.5 py-0.5 text-xs font-medium">{t.id}</code>
                 </TableCell>
                 <TableCell>
                   <span className="font-medium">{t.host}</span>

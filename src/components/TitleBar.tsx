@@ -70,7 +70,10 @@ export function TitleBar() {
         >
           <TerminalIcon className="h-3 w-3" data-tauri-drag-region />
         </span>
-        <span data-tauri-drag-region className="truncate text-xs font-semibold tracking-wide text-foreground/90">
+        <span
+          data-tauri-drag-region
+          className="truncate text-xs font-semibold tracking-wide text-foreground/90"
+        >
           SSH 隧道管理器
         </span>
       </div>
@@ -93,7 +96,11 @@ export function TitleBar() {
           onClick={() => void win.toggleMaximize().catch(() => {})}
           className={cn(controlBase, "hover:bg-muted hover:text-foreground")}
         >
-          {maximized ? <RestoreIcon className="h-3.5 w-3.5" /> : <MaximizeIcon className="h-3.5 w-3.5" />}
+          {maximized ? (
+            <RestoreIcon className="h-3.5 w-3.5" />
+          ) : (
+            <MaximizeIcon className="h-3.5 w-3.5" />
+          )}
         </button>
         <button
           type="button"

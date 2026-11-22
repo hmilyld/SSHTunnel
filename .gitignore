@@ -1,8 +1,14 @@
 node_modules
 dist
 dist-ssr
+coverage
+lcov.info
+.env
+.env.*
+!.env.example
 *.local
 .DS_Store
+Thumbs.db
 
 # Rust / Tauri 构建产物
 src-tauri/target

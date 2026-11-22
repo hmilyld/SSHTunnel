@@ -13,8 +13,7 @@ export function getTheme(): Theme {
     /* localStorage 不可用 */
   }
   const prefersDark =
-    typeof window !== "undefined" &&
-    window.matchMedia?.("(prefers-color-scheme: dark)").matches;
+    typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches;
   return prefersDark ? "dark" : "light";
 }
 
@@ -38,8 +37,8 @@ export function useTheme() {
   }, []);
 
   const toggle = useCallback(() => {
-    applyTheme(getTheme() === "dark" ? "light" : "dark");
-  }, [applyTheme]);
+    applyTheme(theme === "dark" ? "light" : "dark");
+  }, [applyTheme, theme]);
 
   return { theme, toggle };
 }
