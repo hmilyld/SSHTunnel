@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Tauri 2 desktop app (Windows/macOS) managing `ssh -L` local forwards.
-Detailed, verified docs live in `README.md` — trust code + README over memory.
+Detailed docs live in `README.md` and `docs/` — trust code + docs over memory.
 
 ## Layout & entrypoints
 

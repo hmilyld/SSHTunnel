@@ -22,6 +22,8 @@
 - 新增 `SECURITY.md`、`CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、Issue 模板与 PR 模板。
 - 新增英文 README（`README.en.md`），并链接回中文文档。
 - 新增 README 界面截图（`docs/screenshots/`，示例数据）。
+- README 拆分到 `docs/`：README 仅保留简介、截图、快速开始与文档索引；历史验证归档到
+  `docs/verification-history.md`。
 
 ### Changed
 

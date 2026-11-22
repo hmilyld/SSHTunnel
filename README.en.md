@@ -63,6 +63,12 @@ cargo test --manifest-path src-tauri/Cargo.toml
 (cd src-tauri && cargo audit)
 ```
 
+## Documentation
+
+Detailed documentation is currently maintained in Chinese under [docs/](docs/README.md).
+It covers architecture, configuration, usage, development, release, security and
+troubleshooting.
+
 ## Screenshots
 
 Rendered with demo data; no real hosts or credentials are shown.
