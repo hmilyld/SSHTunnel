@@ -191,12 +191,7 @@ pub fn port_listener_info(port: u16) -> Option<(u32, String)> {
         }
         if let Some(start) = line.find("pid=") {
             let rest = &line[start + 4..];
-            let pid: u32 = rest
-                .split(|c: char| c == ',' || c == ')')
-                .next()?
-                .trim()
-                .parse()
-                .ok()?;
+            let pid: u32 = rest.split([',', ')']).next()?.trim().parse().ok()?;
             let name = line
                 .find("(\"")
                 .map(|i| {
