@@ -49,7 +49,10 @@ fn close_all_tunnels(app: &AppHandle) {
             closed += 1;
         }
     }
-    tracing::info!("退出前关闭了 {closed} 条运行中的隧道（共 {} 条记录）", records.len());
+    tracing::info!(
+        "退出前关闭了 {closed} 条运行中的隧道（共 {} 条记录）",
+        records.len()
+    );
 }
 
 /// macOS 菜单栏模板图（36×36 单色 PNG：黑 + alpha，箭头镂空），由 `scripts/gen-icons.mjs` 生成
@@ -83,7 +86,8 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     // 默认退出不杀隧道（进程与记录都保留，下次启动自动恢复状态）
     let quit_keep = MenuItem::with_id(app, "quit", "退出应用（保留隧道）", true, None::<&str>)?;
     // 可选：退出时一并关闭所有隧道
-    let quit_stop = MenuItem::with_id(app, "quit_stop", "退出应用（关闭隧道）", true, None::<&str>)?;
+    let quit_stop =
+        MenuItem::with_id(app, "quit_stop", "退出应用（关闭隧道）", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&show_item, &separator, &quit_keep, &quit_stop])?;
 
     let (icon, as_template) = tray_icon(app)?;

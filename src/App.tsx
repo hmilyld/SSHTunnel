@@ -161,9 +161,7 @@ export default function App() {
       if (isPasswordRequired(e)) {
         // 密码错误（预检阶段被服务器拒绝）：留在弹窗内红字提示，可直接重输
         const detail = passwordRequiredMessage(e);
-        setPwdError(
-          detail ? `密码错误或认证被拒绝：${detail}` : "密码错误，请重试",
-        );
+        setPwdError(detail ? `密码错误或认证被拒绝：${detail}` : "密码错误，请重试");
       } else {
         toast.error(`启动失败：${e}`);
         setPwdReq(null);
@@ -226,11 +224,7 @@ export default function App() {
       {!NATIVE_TITLE_BAR && <TitleBar />}
 
       <div className="flex min-h-0 flex-1 flex-col gap-4 p-5">
-        <AppHeader
-          onNew={openNewDialog}
-          onRefresh={() => void refresh()}
-          refreshing={refreshing}
-        />
+        <AppHeader onNew={openNewDialog} onRefresh={() => void refresh()} refreshing={refreshing} />
 
         <main className="min-h-0 flex-1 overflow-hidden rounded-xl border border-border bg-card shadow-card">
           <TunnelTable

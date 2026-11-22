@@ -123,12 +123,7 @@
 
   code,
   .font-mono {
-    font-family:
-      "Cascadia Code",
-      "JetBrains Mono",
-      Consolas,
-      "SFMono-Regular",
-      monospace;
+    font-family: "Cascadia Code", "JetBrains Mono", Consolas, "SFMono-Regular", monospace;
   }
 }
 

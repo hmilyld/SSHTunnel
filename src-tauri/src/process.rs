@@ -185,9 +185,7 @@ pub fn port_listener_info(port: u16) -> Option<(u32, String)> {
     let port_tok = format!(":{port}");
     for line in text.lines() {
         // 行示例：LISTEN 0 511 127.0.0.1:5173 0.0.0.0:* users:(("node",pid=4968,fd=20))
-        let local_ok = line
-            .split_whitespace()
-            .any(|tok| tok.ends_with(&port_tok));
+        let local_ok = line.split_whitespace().any(|tok| tok.ends_with(&port_tok));
         if !local_ok {
             continue;
         }
@@ -201,7 +199,13 @@ pub fn port_listener_info(port: u16) -> Option<(u32, String)> {
                 .ok()?;
             let name = line
                 .find("(\"")
-                .map(|i| line[i + 2..].split('"').next().unwrap_or("unknown").to_string())
+                .map(|i| {
+                    line[i + 2..]
+                        .split('"')
+                        .next()
+                        .unwrap_or("unknown")
+                        .to_string()
+                })
                 .unwrap_or_else(|| "unknown".to_string());
             return Some((pid, name));
         }
