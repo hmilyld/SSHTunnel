@@ -38,8 +38,9 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
     filter: `cargo test ... <name>`)
   - `cd src-tauri; cargo deny check` (licenses/advisories/sources; `deny.toml` in `src-tauri/`)
   - `cd src-tauri; cargo audit --ignore RUSTSEC-2026-0543`
+  - `cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lcov --output-path lcov.info`
   - CI mirrors these checks in `.github/workflows/ci.yml` (frontend + Windows/macOS Rust matrix
-    + cargo-deny/cargo-audit).
+    + cargo-deny/cargo-audit + Rust coverage).
 - Dev: `pnpm tauri dev`. Release installers: `pnpm tauri build` →
   `src-tauri/target/release/bundle/{msi,nsis}/` (2–6 min; editing `tauri.conf.json` **or
   `tauri.windows.conf.json`** forces a tauri-codegen rebuild).

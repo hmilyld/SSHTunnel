@@ -138,3 +138,38 @@ jobs:
       - name: cargo audit（忽略 chrono 的 unmaintained 告警）
         working-directory: src-tauri
         run: cargo audit --ignore RUSTSEC-2026-0543
+
+  rust-coverage:
+    name: Rust 覆盖率
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: 缓存 Rust 构建产物
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: coverage
+
+      - name: 安装 cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: 生成 LCOV 覆盖率
+        run: cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lcov --output-path lcov.info
+
+      - name: 上传 Rust 覆盖率
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-coverage
+          path: lcov.info
+          if-no-files-found: error
+          retention-days: 7

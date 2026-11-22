@@ -191,6 +191,7 @@ cargo fmt   --manifest-path src-tauri/Cargo.toml --all -- --check  # Rust 格式
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings  # Rust lint
 (cd src-tauri && cargo deny check)                         # Rust 许可证/漏洞/来源
 (cd src-tauri && cargo audit --ignore RUSTSEC-2026-0543)   # RustSec 漏洞（已知 chrono 豁免）
+cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lcov --output-path lcov.info  # Rust 覆盖率
 ```
 
 > CI 在 push 到 `main` 与 PR 时运行同样的检查（`.github/workflows/ci.yml`）。
@@ -236,7 +237,8 @@ git tag v1.0.3 && git push origin v1.0.3
   - `tauri.conf.json` 的 `beforeBuildCommand` 与 `beforeDevCommand` 都是 pnpm
     （`pnpm build` / `pnpm dev`），本地与 CI 行为一致。
 - 发布前先运行复用的 `.github/workflows/ci.yml` 质量门禁（格式、lint、前端测试/覆盖率、
-  npm 依赖漏洞、构建、Rust fmt/clippy/test、cargo-deny/cargo-audit）；门禁失败时不会编译或发布安装包。
+  npm 依赖漏洞、构建、Rust fmt/clippy/test、cargo-deny/cargo-audit、Rust 覆盖率）；
+  门禁失败时不会编译或发布安装包。
 - 产物矩阵：
   - `windows-latest` → `x86_64-pc-windows-msvc`：NSIS `*-setup.exe` 与 WiX `.msi`
   - `macos-latest` → `aarch64-apple-darwin` / `x86_64-apple-darwin`：两个 `.dmg`
