@@ -110,6 +110,9 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
 
 ## Conventions
 
+- Community/security docs live at the repository root: `SECURITY.md` (private advisories),
+  `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`; issue/PR templates live under `.github/`.
+  Never ask for or commit secrets, private keys, tokens, or full config files.
 - UI copy and all user-facing errors are Chinese (`AppError` variants are shown verbatim).
 - Conventional commits (`feat:`/`fix:`/`chore:`/`docs:`) with English summaries;
   push verified changes to `origin/main` (github.com/hmilyld/SSHTunnel, public).

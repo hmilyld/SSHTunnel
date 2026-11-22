@@ -22,6 +22,7 @@ SSHTunnel/
 ├── package.json                 # 前端依赖与脚本（pnpm）
 ├── pnpm-workspace.yaml          # pnpm 11+ 构建脚本放行（allowBuilds: esbuild）
 ├── LICENSE / CHANGELOG.md       # MIT 许可证 / 版本变更
+├── SECURITY / CONTRIBUTING / CODE_OF_CONDUCT
 ├── .nvmrc / rust-toolchain.toml # Node 22 / Rust stable + fmt/clippy
 ├── eslint.config.js             # ESLint flat config（TS + React Hooks / Refresh）
 ├── .prettierrc.json             # Prettier 格式化配置
@@ -465,7 +466,14 @@ git tag v1.0.3 && git push origin v1.0.3
 
 ---
 
-## 10. 许可证
+## 10. 参与贡献
+
+- [CONTRIBUTING.md](CONTRIBUTING.md)：开发环境、验证命令、提交与 PR 约定
+- [SECURITY.md](SECURITY.md)：私密漏洞报告渠道与安全范围
+- [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)：Contributor Covenant 2.1
+- [CHANGELOG.md](CHANGELOG.md)：版本变更记录
+
+## 11. 许可证
 
 本项目以 [MIT License](LICENSE) 发布。
 

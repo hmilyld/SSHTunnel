@@ -18,6 +18,7 @@
 - `app.log` 超过 5 MB 时在启动阶段轮转为 `app.log.1`。
 - 新增 `cargo-deny`（许可证/漏洞/来源）与 `cargo-audit` CI 检查。
 - 启用 Tauri CSP（限制远程资源，保留 IPC/内联样式与脚本所需来源）。
+- 新增 `SECURITY.md`、`CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、Issue 模板与 PR 模板。
 
 ### Changed
 
