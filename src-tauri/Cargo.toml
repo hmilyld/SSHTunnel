@@ -3,10 +3,11 @@ name = "ssh-tunnel-manager"
 version = "1.0.2"
 description = "跨平台 SSH 本地端口转发（ssh -L）管理器"
 authors = ["hmilyld <https://hmilyld.com>"]
+license = "MIT"
 homepage = "https://hmilyld.com"
 repository = "https://github.com/hmilyld/SSHTunnel"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.90"
 
 [lib]
 name = "ssh_tunnel_manager_lib"
@@ -26,6 +27,7 @@ uuid = { version = "1", features = ["v4"] }
 dirs = "6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tauri-plugin-single-instance = "2"
 
 # Unix（macOS）侧：libc::kill 用于进程存活检测与信号发送
 [target.'cfg(unix)'.dependencies]
