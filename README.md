@@ -13,6 +13,8 @@ SSH 本地端口转发（`ssh -L`）：新建转发、实时查看状态、一�
 > 仓库：[github.com/hmilyld/SSHTunnel](https://github.com/hmilyld/SSHTunnel)（[MIT License](LICENSE)） ·
 > [变更记录](CHANGELOG.md)
 
+[![CI](https://github.com/hmilyld/SSHTunnel/actions/workflows/ci.yml/badge.svg)](https://github.com/hmilyld/SSHTunnel/actions/workflows/ci.yml)
+
 ---
 
 ## 1. 项目结构
