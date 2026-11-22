@@ -101,7 +101,7 @@ jobs:
       # src-tauri/target/<target>/release/bundle/ 下的安装包，
       # 并以 tag 名创建/复用 Release、上传安装包。
       - name: 编译并发布安装包
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
