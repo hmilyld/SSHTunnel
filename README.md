@@ -15,12 +15,15 @@ SSH 本地端口转发（`ssh -L`）：新建转发、实时查看状态、一�
 
 [![CI](https://github.com/hmilyld/SSHTunnel/actions/workflows/ci.yml/badge.svg)](https://github.com/hmilyld/SSHTunnel/actions/workflows/ci.yml)
 
+> [English README](README.en.md)
+
 ---
 
 ## 1. 项目结构
 
 ```
 SSHTunnel/
+├── README.md / README.en.md     # 中文 / English
 ├── package.json                 # 前端依赖与脚本（pnpm）
 ├── pnpm-workspace.yaml          # pnpm 11+ 构建脚本放行（allowBuilds: esbuild）
 ├── LICENSE / CHANGELOG.md       # MIT 许可证 / 版本变更

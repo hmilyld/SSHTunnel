@@ -20,6 +20,7 @@
 - 新增 Rust 覆盖率（cargo-llvm-cov）并上传 LCOV 报告。
 - 启用 Tauri CSP（限制远程资源，保留 IPC/内联样式与脚本所需来源）。
 - 新增 `SECURITY.md`、`CONTRIBUTING.md`、`CODE_OF_CONDUCT.md`、Issue 模板与 PR 模板。
+- 新增英文 README（`README.en.md`），并链接回中文文档。
 
 ### Changed
 
