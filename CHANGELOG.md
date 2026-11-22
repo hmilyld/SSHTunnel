@@ -5,6 +5,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Release 正文改为从 `CHANGELOG.md` 对应版本章节生成，避免与自动生成的 PR 列表重复。
+
 ## [1.1.0] - 2026-11-22
 
 ### Added

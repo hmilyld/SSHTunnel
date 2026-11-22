@@ -91,6 +91,11 @@ jobs:
           }
           Write-Output "版本号校验通过：$version"
 
+      - name: 生成 Release 正文（来自 CHANGELOG）
+        id: release_notes
+        shell: bash
+        run: node scripts/release-notes.mjs "${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
       # 先单独构建一次前端：tsc 类型错误会在这里直接失败，归因清楚。
       # 之后 tauri-action 还会再跑一次 tauri.conf.json 的 beforeBuildCommand
       #（同样是 pnpm build），第二次命中缓存、开销可忽略。
@@ -110,15 +115,12 @@ jobs:
           releaseName: "SSH 隧道管理器 ${{ github.ref_name }}"
           # 仅重命名 Release 资产；productName / identifier / 数据目录保持不变
           assetNamePattern: "SSHManager_[version]_[platform]_[arch][setup][ext]"
-          releaseBody: |
-            跨平台 SSH 本地端口转发（ssh -L）管理器 —— https://hmilyld.com
-
-            Windows 用户下载 `*-setup.exe`（NSIS 安装包）或 `.msi` 即可；
-            macOS 用户下载 `.dmg`（未做代码签名，首次打开需在「系统设置 → 隐私与安全性」中放行）。
+          releaseBody: ${{ steps.release_notes.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }}
-          generateReleaseNotes: true
+          # Release 正文统一来自 CHANGELOG，不再追加自动生成的 PR 列表
+          generateReleaseNotes: false
           # 未配置签名密钥（bundle.createUpdaterArtifacts），不生成更新清单
           uploadUpdaterJson: false
 
