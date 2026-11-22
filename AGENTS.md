@@ -8,8 +8,9 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
 - `src/` — React 19 + TS (strict) + Tailwind 4, Vite (no bundler magic, `devUrl: localhost:5173`).
   Entry `src/main.tsx` → `src/App.tsx`; `src/lib/api.ts` = typed FFI wrappers; `src/components/ui/` = shadcn-style primitives.
 - `src-tauri/src/` — `main.rs` (entry → `lib.rs::run()`), `ssh_config.rs` (config parser),
-  `tunnel.rs` (lifecycle core), `store.rs` (JSON persistence), `process.rs` (cross-platform process),
-  `commands.rs` (FFI layer), `tray.rs`, `logging.rs`, `error.rs` (user-facing errors).
+  `ssh_failure.rs` (exit/stderr classification, password detection), `tunnel.rs` (lifecycle core),
+  `store.rs` (JSON persistence), `process.rs` (cross-platform process), `commands.rs` (FFI layer),
+  `tray.rs`, `logging.rs`, `error.rs` (user-facing errors).
 - `scripts/` — `gen-icons.mjs` (icon codegen), `verify-icons.mjs` (icon colour/geometry audit),
   `uiclick.ps1` / `screenshot.ps1` (UIA verification helpers).
 
