@@ -85,7 +85,7 @@ Windows 产物位于 `src-tauri/target/release/bundle/{msi,nsis}/`，macOS 产�
 
 ## 项目状态
 
-当前版本为 `1.0.2`。本地验证包括前端 15 个测试、Rust 27 个测试、rustfmt、clippy、
+当前版本为 `1.1.0`。本地验证包括前端 15 个测试、Rust 27 个测试、rustfmt、clippy、
 cargo-deny、cargo-audit 与 release 二进制构建。前端与 Rust 覆盖率作为基线报告，
 尚未设置硬阈值。
 

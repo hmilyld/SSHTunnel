@@ -16,8 +16,8 @@
 推送 `vX.Y.Z` 形式的 tag：
 
 ```bash
-git tag v1.0.3
-git push origin v1.0.3
+git tag v1.1.0
+git push origin v1.1.0
 ```
 
 `release.yml` 会以同名 tag 创建或复用 GitHub Release，并上传安装包。
@@ -52,7 +52,7 @@ Release 资产使用统一命名：
 SSHManager_<version>_<platform>_<arch>[setup].<ext>
 ```
 
-示例：`SSHManager_1.0.2_windows_x64-setup.exe`。
+示例：`SSHManager_1.1.0_windows_x64-setup.exe`。
 
 该规则仅影响下载文件名。`productName`、`identifier`、应用数据目录与安装身份保持不变。
 

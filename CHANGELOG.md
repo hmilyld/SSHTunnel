@@ -5,6 +5,8 @@
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-11-22
+
 ### Added
 
 - 新增 MIT `LICENSE`，并在 `Cargo.toml` 声明 `license = "MIT"`。
@@ -75,7 +77,8 @@
 
 - 审计修复、版权信息与底部信息栏重设计。
 
-[Unreleased]: https://github.com/hmilyld/SSHTunnel/compare/v1.0.2...HEAD
+[Unreleased]: https://github.com/hmilyld/SSHTunnel/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/hmilyld/SSHTunnel/compare/v1.0.2...v1.1.0
 [1.0.2]: https://github.com/hmilyld/SSHTunnel/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/hmilyld/SSHTunnel/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/hmilyld/SSHTunnel/releases/tag/v1.0.0
