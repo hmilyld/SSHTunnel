@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
-import { AlertIcon, PencilIcon, SpinnerIcon, TerminalIcon } from "@/components/icons";
+import { AlertIcon, CopyIcon, PencilIcon, SpinnerIcon, TerminalIcon } from "@/components/icons";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -167,6 +167,18 @@ export function NewTunnelDialog({
     }
   };
 
+  const copyPreview = async () => {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("当前环境不支持剪贴板");
+      }
+      await navigator.clipboard.writeText(preview);
+      toast.success("命令已复制");
+    } catch (e) {
+      toast.error("复制失败", { description: String(e) });
+    }
+  };
+
   const noHosts = !hostsLoading && !hostsError && hosts.length === 0;
 
   return (
@@ -195,10 +207,22 @@ export function NewTunnelDialog({
 
         {/* 命令预览 */}
         <div className="rounded-lg border border-border bg-muted/60 px-3 py-2.5">
-          <p className="mb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-            {editing ? "保存后启动时将执行" : "将执行"}
-          </p>
-          <code className="block break-all text-xs leading-relaxed text-foreground/90">
+          <div className="mb-1 flex items-center justify-between gap-2">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+              {editing ? "保存后启动时将执行" : "将执行"}
+            </p>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              onClick={() => void copyPreview()}
+              aria-label="复制命令"
+              title="复制命令"
+            >
+              <CopyIcon className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+          <code className="block select-text break-all text-xs leading-relaxed text-foreground/90">
             {preview}
           </code>
         </div>

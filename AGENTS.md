@@ -28,7 +28,7 @@ Detailed, verified docs live in `README.md` — trust code + README over memory.
 - Verify (order doesn't matter, all are required):
   - `pnpm format:check` (Prettier)
   - `pnpm lint` (ESLint flat config)
-  - `pnpm test` (Vitest; 14 tests)
+  - `pnpm test` (Vitest; 15 tests)
   - `pnpm audit --audit-level high`
   - `pnpm build` (= `tsc -b` strict + vite production build)
   - `cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check`

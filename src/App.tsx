@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { Toaster, toast } from "sonner";
 
 import { AppHeader } from "@/components/AppHeader";
+import { ConfirmDialog } from "@/components/ConfirmDialog";
 import { NewTunnelDialog } from "@/components/NewTunnelDialog";
 import { PasswordDialog, type PasswordRequest } from "@/components/PasswordDialog";
 import { StatusBar } from "@/components/StatusBar";
@@ -37,6 +38,10 @@ export default function App() {
   const [dialogOpen, setDialogOpen] = useState(false);
   /** 正在修改的已停止记录（null = 新建模式） */
   const [editing, setEditing] = useState<Tunnel | null>(null);
+  /** 待确认删除的记录 */
+  const [deleteTarget, setDeleteTarget] = useState<Tunnel | null>(null);
+  /** 轮询失败只提示一次，避免每 3 秒刷屏 */
+  const refreshErrorRef = useRef(false);
 
   // ===== 密码认证流程（服务器要求密码时由后端 PASSWORD_REQUIRED 触发） =====
   const [pwdReq, setPwdReq] = useState<PasswordRequest | null>(null);
@@ -51,19 +56,32 @@ export default function App() {
     if (!silent) setRefreshing(true);
     try {
       setTunnels(await api.listTunnels());
+      refreshErrorRef.current = false;
     } catch (e) {
-      toast.error(`刷新失败：${e}`);
+      if (!refreshErrorRef.current) {
+        refreshErrorRef.current = true;
+        toast.error(`刷新失败：${e}`);
+      }
     } finally {
       setLoading(false);
       if (!silent) window.setTimeout(() => setRefreshing(false), 350);
     }
   }, []);
 
-  // 首次加载 + 每 3 秒轮询状态
+  // 首次加载 + 每 3 秒轮询状态；窗口隐藏时暂停，重新可见时立即刷新
   useEffect(() => {
     void refresh(true);
-    const timer = window.setInterval(() => void refresh(true), POLL_INTERVAL);
-    return () => window.clearInterval(timer);
+    const timer = window.setInterval(() => {
+      if (!document.hidden) void refresh(true);
+    }, POLL_INTERVAL);
+    const onVisibilityChange = () => {
+      if (!document.hidden) void refresh(true);
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [refresh]);
 
   // ssh 进程自行退出时即时通知（服务端断开 / 被外部 kill）
@@ -177,8 +195,16 @@ export default function App() {
     setPwdError(null);
   };
 
-  /** 显式删除记录（仅已停止的记录可删除） */
-  const handleDelete = async (t: Tunnel) => {
+  /** 打开删除确认，不直接删除 */
+  const requestDelete = (t: Tunnel) => {
+    setDeleteTarget(t);
+  };
+
+  /** 确认后显式删除记录（仅已停止的记录可删除） */
+  const confirmDelete = async () => {
+    const t = deleteTarget;
+    if (!t) return;
+    setDeleteTarget(null);
     setBusyId(t.id);
     try {
       setTunnels(await api.removeTunnel(t.id));
@@ -234,7 +260,7 @@ export default function App() {
             onStop={handleStop}
             onStart={handleStart}
             onEdit={openEditDialog}
-            onDelete={handleDelete}
+            onDelete={requestDelete}
             onNew={openNewDialog}
           />
         </main>
@@ -257,6 +283,21 @@ export default function App() {
         error={pwdError}
         onCancel={cancelPassword}
         onSubmit={submitPassword}
+      />
+
+      {/* 删除记录二次确认 */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="删除隧道记录？"
+        description={
+          deleteTarget
+            ? `将删除已停止的记录 ${deleteTarget.host}（${deleteTarget.bind}:${deleteTarget.local_port} → ${deleteTarget.remote_host}:${deleteTarget.remote_port}）。删除后将从 tunnels.json 移除，可重新创建。`
+            : ""
+        }
+        confirmLabel="删除"
+        destructive
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => void confirmDelete()}
       />
 
       {/* offset：避开顶部标题栏（Windows 自绘 / macOS 原生） */}
